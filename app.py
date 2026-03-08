@@ -209,7 +209,8 @@ if st.button("🚀 Run Analysis", type="primary"):
 # ────────────────────────────────────────────────
 # Results / Dashboard (when analysis has run)
 # ────────────────────────────────────────────────
-if st.session_state.analysis_run:
+if 'df_sess' in st.session_state and st.session_state.df_sess is not None and not st.session_state.df_sess.empty:
+    
     df_sess = st.session_state.df_sess
     df_hr   = st.session_state.df_hr
     found_ids = st.session_state.found_ids
@@ -479,3 +480,4 @@ if st.session_state.analysis_run:
 
 else:
     st.info("Upload ID list + data files, then click Run Analysis.")
+
