@@ -407,6 +407,56 @@ def create_daily_summary(df_sessions: pd.DataFrame) -> pd.DataFrame:
 
     return daily.sort_values(["canonical_subject", "date"])
 
+def add_non_zero_inf_days(df_sessions: pd.DataFrame) -> pd.DataFrame:
+    """
+    Returns DataFrame with:
+    - non_zero_inf_days: days with >0 infusions per subject per program
+    - total_non_zero_days: total unique days with >0 infusions per subject (across all programs)
+    """
+    if df_sessions.empty:
+        return pd.DataFrame(columns=['canonical_subject', 'program_name', 'non_zero_inf_days', 'total_non_zero_days'])
+
+    df = df_sessions.copy()
+
+    if 'start_date' not in df.columns:
+        st.warning("No 'start_date' column — cannot compute non-zero infusion days.")
+        return pd.DataFrame(columns=['canonical_subject', 'program_name', 'non_zero_inf_days', 'total_non_zero_days'])
+
+    df['start_date'] = pd.to_datetime(df['start_date'], errors='coerce')
+    df = df.dropna(subset=['start_date'])
+    df['date'] = df['start_date'].dt.date
+
+    # Ensure infusions is numeric
+    df['infusions'] = pd.to_numeric(df['infusions'], errors='coerce').fillna(0)
+
+    # Per day infusions per subject-program
+    daily_inf = (
+        df.groupby(['canonical_subject', 'program_name', 'date'])['infusions']
+        .sum()
+        .reset_index()
+    )
+
+    # Per subject-program: count days > 0
+    per_program = (
+        daily_inf[daily_inf['infusions'] > 0]
+        .groupby(['canonical_subject', 'program_name'])
+        .size()
+        .reset_index(name='non_zero_inf_days')
+    )
+
+    # Per subject: total unique days > 0 across ALL programs
+    total_days = (
+        daily_inf[daily_inf['infusions'] > 0]
+        .groupby('canonical_subject')['date']
+        .nunique()
+        .reset_index(name='total_non_zero_days')
+    )
+
+    # Merge total into per-program
+    result = per_program.merge(total_days, on='canonical_subject', how='left')
+    result = result.fillna({"total_non_zero_days": 0})
+
+    return result
 
 def report_missing_and_box_room(
     expected_list: List[str],
@@ -414,8 +464,7 @@ def report_missing_and_box_room(
     df: pd.DataFrame
 ):
     """
-    Display missing subjects and Box/Room distribution.
-    Call this from app.py after processing.
+    Display missing subjects and enhanced Box/Room distribution with non-zero infusion days.
     """
     canon_expected = {canonicalize_id(s) for s in expected_list if s.strip()}
     missing = sorted(canon_expected - found_set)
@@ -428,7 +477,50 @@ def report_missing_and_box_room(
             st.success("All expected subjects were found in the data.")
 
     # Box / Room summary
-    if "Box" in df.columns or "Room" in df.columns:
-        st.subheader("Box / Room Distribution")
-        summary = df.groupby(["canonical_subject", "Box", "Room"]).size().reset_index(name="session_count")
-        st.dataframe(summary.style.highlight_max(subset=["session_count"], color="#d4edda"))
+    if "Box" not in df.columns and "Room" not in df.columns:
+        return
+
+    st.subheader("Box / Room Distribution")
+
+    # Base summary: one row per subject + box + room + program
+    summary = (
+        df.groupby(["canonical_subject", "Box", "Room", "program_name"])
+        .size()
+        .reset_index(name="session_count")
+    )
+
+    # Get non-zero days stats
+    non_zero_df = add_non_zero_inf_days(df)
+
+    # Merge
+    summary = summary.merge(
+        non_zero_df,
+        on=["canonical_subject", "program_name"],
+        how="left"
+    ).fillna({"non_zero_inf_days": 0, "total_non_zero_days": 0})
+
+    # Sort by most active first
+    summary = summary.sort_values(
+        ["total_non_zero_days", "non_zero_inf_days", "session_count"],
+        ascending=False
+    )
+
+    # Display with formatting & highlighting
+    st.dataframe(
+        summary.style
+        .format({
+            "non_zero_inf_days": lambda x: f"{int(x)}" if x > 0 else "-",
+            "total_non_zero_days": lambda x: f"{int(x)}" if x > 0 else "-",
+            "session_count": "{:.0f}"
+        })
+        .highlight_max(subset=["session_count"], color="#d4edda")          # green for most sessions
+        .highlight_max(subset=["non_zero_inf_days"], color="#fff3cd")     # yellow for most infusion days per program
+        .highlight_max(subset=["total_non_zero_days"], color="#d4edda")   # green for overall most active animals
+    )
+
+    # Summary caption
+    st.caption(
+        f"Showing {len(summary)} rows • "
+        f"Total unique animals: {summary['canonical_subject'].nunique()} • "
+        f"Total non-zero infusion days (across all animals/programs): {summary['total_non_zero_days'].sum():.0f}"
+    )
