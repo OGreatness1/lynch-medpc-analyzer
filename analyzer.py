@@ -198,30 +198,31 @@ def process_sessions(
                     break
             if prog != "UNMAPPED":
                 break
-                # ─── ADVANCED MOUSE PROCESSING ───
+                        # ─── ADVANCED MOUSE PROCESSING (L, R, P, Z arrays) ───
         if mapping.get("special_processing") == "MOUSE_ADVANCED":
-            # Pull specific values from the B array (B[0], B[1], B[2], B[6], B[7], etc.)
+            # Mouse files use I = infusions, J = active, K = inactive
             b_array = sess.arrays.get("B", [])
+            
+            row["timeout_active"]        = b_array[6] if len(b_array) > 6 else 0
+            row["timeout_inactive"]      = b_array[7] if len(b_array) > 7 else 0
+            row["post_session_active"]   = b_array[8] if len(b_array) > 8 else 0
+            row["post_session_inactive"] = b_array[9] if len(b_array) > 9 else 0
 
-            row["timeout_active"]          = b_array[6] if len(b_array) > 6 else 0
-            row["timeout_inactive"]        = b_array[7] if len(b_array) > 7 else 0
-            row["post_session_active"]     = b_array[8] if len(b_array) > 8 else 0
-            row["post_session_inactive"]   = b_array[9] if len(b_array) > 9 else 0
-
-            # Optional: you can also pull the primary values from B if you prefer
-            row["active_presses"] = b_array[0] if len(b_array) > 0 else row.get("active_presses", 0)
-            row["inactive_presses"] = b_array[1] if len(b_array) > 1 else row.get("inactive_presses", 0)
-            row["infusions"] = b_array[2] if len(b_array) > 2 else row.get("infusions", 0)
-
-            # Store the large timestamp arrays
             row["active_timestamps"]     = sess.arrays.get("L", [])
             row["inactive_timestamps"]   = sess.arrays.get("R", [])
-
-            # Store PR schedule (P array)
             row["pr_schedule"]           = sess.arrays.get("P", [])
-
-            # Store session parameters (Z array)
             row["session_params"]        = sess.arrays.get("Z", [])
+
+        else:
+            # For all other programs (rats, etc.), set default values
+            row["timeout_active"]        = 0
+            row["timeout_inactive"]      = 0
+            row["post_session_active"]   = 0
+            row["post_session_inactive"] = 0
+            row["active_timestamps"]     = []
+            row["inactive_timestamps"]   = []
+            row["pr_schedule"]           = []
+            row["session_params"]        = []
         
 
         start_dt = robust_parse_date(sess.meta.get("Start Date", ""))
@@ -291,8 +292,6 @@ def process_sessions(
             "post_session_inactive": 0,
             "pr_schedule": [],
             "session_params": [],
-            "pr_schedule": sess.arrays.get(mapping.get("pr_schedule", "P"), []),
-            "z_params": sess.arrays.get(mapping.get("z_params", "Z"), []),
 
             # Add Box/Room if present in metadata
             "Box": sess.meta.get("Box", ""),
