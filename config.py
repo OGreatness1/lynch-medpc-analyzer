@@ -113,21 +113,23 @@ map_withdrawal = {
 }
 
 # ────────────────────────────────────────────────
-# MOUSE PROGRAM MAPPINGS — SEPARATE + ADVANCED (based on your real files + table)
+# MOUSE PROGRAM MAPPINGS — FINAL VERSION
 # ────────────────────────────────────────────────
 
 map_mouse_fr1 = {
-    "infusions": "I",                    # Main infusions (B(2) in program logic)
-    "active_presses": "J",               # Active_Nosepokes (B(0))
-    "inactive_presses": "K",             # Inactive_Nosepokes (B(1))
+    "infusions": "I",
+    "active_presses": "J",
+    "inactive_presses": "K",
     "infusion_timestamps": "G",
-    "active_timestamps": "L",
-    "inactive_timestamps": "R",
+    "active_timestamps": "L",           # All active nosepoke times
+    "inactive_timestamps": "R",         # All inactive nosepoke times
     "duration": "S",
     "weight": "A",
     "infusion_time": "A",
-    "special_processing": "MOUSE_ADVANCED",   # ← NEW
-    "W_value": "B",                      # Will handle B array indexing later
+    "pr_schedule": "P",                 # Progressive ratio sequence
+    "z_params": "Z",                    # Session parameters
+    "special_processing": "MOUSE_ADVANCED",
+    "W_value": "B",
     "T_value": "B",
 }
 
@@ -139,10 +141,12 @@ map_mouse_pr = {
     "inactive_timestamps": "R",
     "infusion_timestamps": "G",
     "duration": "S",
-    "breakpoint": "A",                   # A(1)
+    "breakpoint": "A",
     "weight": "A",
     "infusion_time": "A",
-    "special_processing": "MOUSE_ADVANCED",   # ← NEW
+    "pr_schedule": "P",
+    "z_params": "Z",
+    "special_processing": "MOUSE_ADVANCED",
     "W_value": "B",
     "T_value": "B",
 }
@@ -157,7 +161,9 @@ map_mouse_extended_access = {
     "duration": "S",
     "weight": "A",
     "infusion_time": "A",
-    "special_processing": "MOUSE_ADVANCED",   # ← NEW
+    "pr_schedule": "P",
+    "z_params": "Z",
+    "special_processing": "MOUSE_ADVANCED",
     "W_value": "B",
     "T_value": "B",
 }
