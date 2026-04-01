@@ -198,32 +198,7 @@ def process_sessions(
                     break
             if prog != "UNMAPPED":
                 break
-                        # ─── ADVANCED MOUSE PROCESSING (L, R, P, Z arrays) ───
-        if mapping.get("special_processing") == "MOUSE_ADVANCED":
-            # Mouse files use I = infusions, J = active, K = inactive
-            b_array = sess.arrays.get("B", [])
-            
-            row["timeout_active"]        = b_array[6] if len(b_array) > 6 else 0
-            row["timeout_inactive"]      = b_array[7] if len(b_array) > 7 else 0
-            row["post_session_active"]   = b_array[8] if len(b_array) > 8 else 0
-            row["post_session_inactive"] = b_array[9] if len(b_array) > 9 else 0
-
-            row["active_timestamps"]     = sess.arrays.get("L", [])
-            row["inactive_timestamps"]   = sess.arrays.get("R", [])
-            row["pr_schedule"]           = sess.arrays.get("P", [])
-            row["session_params"]        = sess.arrays.get("Z", [])
-
-        else:
-            # For all other programs (rats, etc.), set default values
-            row["timeout_active"]        = 0
-            row["timeout_inactive"]      = 0
-            row["post_session_active"]   = 0
-            row["post_session_inactive"] = 0
-            row["active_timestamps"]     = []
-            row["inactive_timestamps"]   = []
-            row["pr_schedule"]           = []
-            row["session_params"]        = []
-        
+                           
 
         start_dt = robust_parse_date(sess.meta.get("Start Date", ""))
         end_dt   = robust_parse_date(sess.meta.get("End Date", ""))
@@ -297,6 +272,32 @@ def process_sessions(
             "Box": sess.meta.get("Box", ""),
             "Room": sess.meta.get("Room", "") or sess.meta.get("Experiment", ""),
         }
+
+         # ─── ADVANCED MOUSE PROCESSING (L, R, P, Z arrays) ───
+        if mapping.get("special_processing") == "MOUSE_ADVANCED":
+            # Mouse files use I = infusions, J = active, K = inactive
+            b_array = sess.arrays.get("B", [])
+            
+            row["timeout_active"]        = b_array[6] if len(b_array) > 6 else 0
+            row["timeout_inactive"]      = b_array[7] if len(b_array) > 7 else 0
+            row["post_session_active"]   = b_array[8] if len(b_array) > 8 else 0
+            row["post_session_inactive"] = b_array[9] if len(b_array) > 9 else 0
+
+            row["active_timestamps"]     = sess.arrays.get("L", [])
+            row["inactive_timestamps"]   = sess.arrays.get("R", [])
+            row["pr_schedule"]           = sess.arrays.get("P", [])
+            row["session_params"]        = sess.arrays.get("Z", [])
+
+        else:
+            # For all other programs (rats, etc.), set default values
+            row["timeout_active"]        = 0
+            row["timeout_inactive"]      = 0
+            row["post_session_active"]   = 0
+            row["post_session_inactive"] = 0
+            row["active_timestamps"]     = []
+            row["inactive_timestamps"]   = []
+            row["pr_schedule"]           = []
+            row["session_params"]        = []
 
         # Special fields for extinction/reinstatement
         if "EXTINCTION" in prog.upper() or "REINSTATEMENT" in prog.upper():
