@@ -73,9 +73,34 @@ with st.sidebar:
     data_files = st.file_uploader("MedPC .txt / .zip files", accept_multiple_files=True)
 
     st.header("Cohort Hard-Filter")
-    cohort_options = ["G136A", "G136B", "G140A", "G140B", "All Others"]
-    selected_cohorts = st.multiselect("Only include these cohorts", cohort_options, default=cohort_options)
 
+    # Quick and convenient toggle for mouse users
+    include_mice = st.checkbox("Include Mice (G126 / G126A / G126B)", value=True)
+
+    # Full cohort options
+    cohort_options = [
+        "G136A", "G136B",
+        "G140A", "G140B",
+        "G126", "G126A", "G126B",   # Mouse cohorts
+        "All Others"
+    ]
+
+    # Smart default selection
+    default_cohorts = ["G126", "G126A", "G126B", "G136A", "G136B", "G140A", "G140B", "All Others"] \
+        if include_mice else cohort_options
+
+    selected_cohorts = st.multiselect(
+        "Only include these cohorts",
+        cohort_options,
+        default=default_cohorts
+    )
+
+    # If user checked "Include Mice", force G126* cohorts to be included
+    if include_mice:
+        mouse_cohorts = {"G126", "G126A", "G126B"}
+        selected_cohorts = list(set(selected_cohorts) | mouse_cohorts)
+
+	
     st.header("Custom Flag Thresholds")
     min_active_presses = st.slider("Min active presses (low activity)", 0, 50, 5)
     max_inactive_ratio = st.slider("Max inactive/active ratio", 0.0, 2.0, 0.4, 0.05)
@@ -181,13 +206,16 @@ if st.button("🚀 Run Analysis", type="primary"):
 	    conc_mgml=conc_mgml  # ← NEW
 	)
 
-        # Cohort hard filter
+                # Cohort hard filter
         if "All Others" not in selected_cohorts:
-            mask = df_sess["canonical_subject"].str.contains('|'.join(selected_cohorts), case=False, na=False)
+            # Join all selected cohorts with | for regex matching
+            cohort_pattern = '|'.join(selected_cohorts)
+            mask = df_sess["canonical_subject"].str.contains(cohort_pattern, case=False, na=False)
+            
             df_sess = df_sess[mask].copy()
+            
             if not df_hr.empty:
                 df_hr = df_hr[df_hr["canonical_subject"].isin(df_sess["canonical_subject"])].copy()
-
         # Apply flags with custom thresholds
         df_sess = generate_pattern_flags(
             df_sess,
@@ -205,7 +233,7 @@ if st.button("🚀 Run Analysis", type="primary"):
             'analysis_run': True
         })
         st.rerun()
-
+       
 # ────────────────────────────────────────────────
 # Results / Dashboard (when analysis has run)
 # ────────────────────────────────────────────────
