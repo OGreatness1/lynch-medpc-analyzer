@@ -291,6 +291,8 @@ def process_sessions(
             "post_session_inactive": 0,
             "pr_schedule": [],
             "session_params": [],
+            "pr_schedule": sess.arrays.get(mapping.get("pr_schedule", "P"), []),
+            "z_params": sess.arrays.get(mapping.get("z_params", "Z"), []),
 
             # Add Box/Room if present in metadata
             "Box": sess.meta.get("Box", ""),
