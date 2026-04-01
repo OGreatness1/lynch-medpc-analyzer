@@ -198,6 +198,31 @@ def process_sessions(
                     break
             if prog != "UNMAPPED":
                 break
+                # ─── ADVANCED MOUSE PROCESSING ───
+        if mapping.get("special_processing") == "MOUSE_ADVANCED":
+            # Pull specific values from the B array (B[0], B[1], B[2], B[6], B[7], etc.)
+            b_array = sess.arrays.get("B", [])
+
+            row["timeout_active"]          = b_array[6] if len(b_array) > 6 else 0
+            row["timeout_inactive"]        = b_array[7] if len(b_array) > 7 else 0
+            row["post_session_active"]     = b_array[8] if len(b_array) > 8 else 0
+            row["post_session_inactive"]   = b_array[9] if len(b_array) > 9 else 0
+
+            # Optional: you can also pull the primary values from B if you prefer
+            row["active_presses"] = b_array[0] if len(b_array) > 0 else row.get("active_presses", 0)
+            row["inactive_presses"] = b_array[1] if len(b_array) > 1 else row.get("inactive_presses", 0)
+            row["infusions"] = b_array[2] if len(b_array) > 2 else row.get("infusions", 0)
+
+            # Store the large timestamp arrays
+            row["active_timestamps"]     = sess.arrays.get("L", [])
+            row["inactive_timestamps"]   = sess.arrays.get("R", [])
+
+            # Store PR schedule (P array)
+            row["pr_schedule"]           = sess.arrays.get("P", [])
+
+            # Store session parameters (Z array)
+            row["session_params"]        = sess.arrays.get("Z", [])
+        
 
         start_dt = robust_parse_date(sess.meta.get("Start Date", ""))
         end_dt   = robust_parse_date(sess.meta.get("End Date", ""))
@@ -256,7 +281,17 @@ def process_sessions(
             # ─── ADDED: Optional extras if you see them often in your data ───
             "U_value": get_val(sess, mapping.get("U_value", "U")),
             "V_value": get_val(sess, mapping.get("V_value", "V")),
-            # ────────────────────────────────────────────────────────────────────────────────────────
+                        "U_value": get_val(sess, mapping.get("U_value", "U")),
+            "V_value": get_val(sess, mapping.get("V_value", "V")),
+
+            # ─── MOUSE-SPECIFIC FIELDS (from B array) ───
+            "timeout_active": 0,
+            "timeout_inactive": 0,
+            "post_session_active": 0,
+            "post_session_inactive": 0,
+            "pr_schedule": [],
+            "session_params": [],
+
             # Add Box/Room if present in metadata
             "Box": sess.meta.get("Box", ""),
             "Room": sess.meta.get("Room", "") or sess.meta.get("Experiment", ""),
@@ -341,18 +376,24 @@ def generate_pattern_flags(
 def create_daily_summary(df_sessions: pd.DataFrame) -> pd.DataFrame:
     """
     Aggregate to one row per subject per day — safely handles missing columns.
-    Includes 'had_overnight_session' flag if any session in the day crossed midnight.
+    Now includes mouse timeout and post-session fields.
     """
     if df_sessions.empty:
         return pd.DataFrame()
 
     df = df_sessions.copy()
+    
+    # Safety: ensure start_date is datetime
+    if 'start_date' in df.columns:
+        df['start_date'] = pd.to_datetime(df['start_date'], errors='coerce')
+        df = df.dropna(subset=['start_date'])
+    
     df["date"] = df["start_date"].dt.date
 
-    # Base grouping keys (always present)
+    # Base grouping keys
     group_keys = ["canonical_subject", "gender", "date"]
 
-    # Only include columns that actually exist in this subset
+    # Only include columns that actually exist
     possible_agg = {
         "infusions": "sum",
         "active_presses": "sum",
@@ -370,19 +411,22 @@ def create_daily_summary(df_sessions: pd.DataFrame) -> pd.DataFrame:
         "W_value": "sum",
         "T_value": "sum",
         "timeout_presses_per_inf": "mean",
-        # ─── ADDED: aggregate new estimates ───
+        # New mouse fields
+        "timeout_active": "sum",
+        "timeout_inactive": "sum",
+        "post_session_active": "sum",
+        "post_session_inactive": "sum",
+        # Estimates
         "estimated_volume_ml": "sum",
         "estimated_inf_dur_sec": "mean",
         "estimated_intake_mgkg": "sum",
     }
 
-    # Filter to only columns present in df
     agg_dict = {col: func for col, func in possible_agg.items() if col in df.columns}
 
-    # Aggregate
     daily = df.groupby(group_keys).agg(agg_dict).reset_index()
 
-    # Rename aggregated columns (only those that exist)
+    # Rename columns
     rename_map = {
         "infusions": "total_infusions",
         "active_presses": "total_active_presses",
@@ -395,6 +439,10 @@ def create_daily_summary(df_sessions: pd.DataFrame) -> pd.DataFrame:
         "W_value": "total_W_value",
         "T_value": "total_T_value",
         "timeout_presses_per_inf": "avg_timeout_presses_per_inf",
+        "timeout_active": "total_timeout_active",
+        "timeout_inactive": "total_timeout_inactive",
+        "post_session_active": "total_post_session_active",
+        "post_session_inactive": "total_post_session_inactive",
         "estimated_volume_ml": "total_estimated_volume_ml",
         "estimated_inf_dur_sec": "avg_estimated_inf_dur_sec",
         "estimated_intake_mgkg": "total_estimated_intake_mgkg",
@@ -464,7 +512,7 @@ def report_missing_and_box_room(
     df: pd.DataFrame
 ):
     """
-    Display missing subjects and enhanced Box/Room distribution with non-zero infusion days.
+    Display missing subjects and enhanced Box/Room distribution with non-zero infusion days + mouse timeout fields.
     """
     canon_expected = {canonicalize_id(s) for s in expected_list if s.strip()}
     missing = sorted(canon_expected - found_set)
@@ -476,13 +524,12 @@ def report_missing_and_box_room(
         if expected_list:
             st.success("All expected subjects were found in the data.")
 
-    # Box / Room summary
     if "Box" not in df.columns and "Room" not in df.columns:
         return
 
     st.subheader("Box / Room Distribution")
 
-    # Base summary: one row per subject + box + room + program
+    # Base summary
     summary = (
         df.groupby(["canonical_subject", "Box", "Room", "program_name"])
         .size()
@@ -505,7 +552,7 @@ def report_missing_and_box_room(
         ascending=False
     )
 
-    # Display with formatting & highlighting
+    # Display with nice formatting
     st.dataframe(
         summary.style
         .format({
@@ -513,14 +560,13 @@ def report_missing_and_box_room(
             "total_non_zero_days": lambda x: f"{int(x)}" if x > 0 else "-",
             "session_count": "{:.0f}"
         })
-        .highlight_max(subset=["session_count"], color="#d4edda")          # green for most sessions
-        .highlight_max(subset=["non_zero_inf_days"], color="#fff3cd")     # yellow for most infusion days per program
-        .highlight_max(subset=["total_non_zero_days"], color="#d4edda")   # green for overall most active animals
+        .highlight_max(subset=["session_count"], color="#d4edda")
+        .highlight_max(subset=["non_zero_inf_days"], color="#fff3cd")
+        .highlight_max(subset=["total_non_zero_days"], color="#d4edda")
     )
 
-    # Summary caption
     st.caption(
         f"Showing {len(summary)} rows • "
         f"Total unique animals: {summary['canonical_subject'].nunique()} • "
-        f"Total non-zero infusion days (across all animals/programs): {summary['total_non_zero_days'].sum():.0f}"
+        f"Total non-zero infusion days (across all): {summary['total_non_zero_days'].sum():.0f}"
     )
