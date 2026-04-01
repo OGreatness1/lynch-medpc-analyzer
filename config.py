@@ -112,33 +112,55 @@ map_withdrawal = {
     "T_value": "T",
 }
 
-map_mouse = {
-    "infusions": "R",
-    "active_presses": "A",
-    "inactive_presses": "I",
+# ────────────────────────────────────────────────
+# MOUSE PROGRAM MAPPINGS — SEPARATE + ADVANCED (based on your real files + table)
+# ────────────────────────────────────────────────
+
+map_mouse_fr1 = {
+    "infusions": "I",                    # Main infusions (B(2) in program logic)
+    "active_presses": "J",               # Active_Nosepokes (B(0))
+    "inactive_presses": "K",             # Inactive_Nosepokes (B(1))
     "infusion_timestamps": "G",
-    "active_timestamps": [],
-    "inactive_timestamps": [],
-    "duration": "Z",
-    "extra_vars": ["L", "G"],
-    "W_value": "W",
-    "T_value": "T",
+    "active_timestamps": "L",
+    "inactive_timestamps": "R",
+    "duration": "S",
+    "weight": "A",
+    "infusion_time": "A",
+    "special_processing": "MOUSE_ADVANCED",   # ← NEW
+    "W_value": "B",                      # Will handle B array indexing later
+    "T_value": "B",
 }
 
 map_mouse_pr = {
-    "infusions": "R",
-    "active_presses": "A",
-    "inactive_presses": "I",
-    "infusion_timestamps": [],
-    "active_timestamps": [],
-    "inactive_timestamps": [],
-    "duration": "Z",
-    "breakpoint": "V",
-    "extra_vars": ["L", "G"],
-    "W_value": "W",
-    "T_value": "T",
+    "infusions": "I",
+    "active_presses": "J",
+    "inactive_presses": "K",
+    "active_timestamps": "L",
+    "inactive_timestamps": "R",
+    "infusion_timestamps": "G",
+    "duration": "S",
+    "breakpoint": "A",                   # A(1)
+    "weight": "A",
+    "infusion_time": "A",
+    "special_processing": "MOUSE_ADVANCED",   # ← NEW
+    "W_value": "B",
+    "T_value": "B",
 }
 
+map_mouse_extended_access = {
+    "infusions": "I",
+    "active_presses": "J",
+    "inactive_presses": "K",
+    "infusion_timestamps": "G",
+    "active_timestamps": "L",
+    "inactive_timestamps": "R",
+    "duration": "S",
+    "weight": "A",
+    "infusion_time": "A",
+    "special_processing": "MOUSE_ADVANCED",   # ← NEW
+    "W_value": "B",
+    "T_value": "B",
+}
 # ────────────────────────────────────────────────
 # MSN pattern matching (program name → list of normalized substrings)
 # ────────────────────────────────────────────────
@@ -266,8 +288,10 @@ DEFAULT_MSN_PATTERNS: Dict[str, List[str]] = {
         "mouseintera",
         "mouseintermittentaccess",
     ],
-    "MOUSE - PR": ["mousepr", "mouse pr"],
-    "MOUSE - FR1": ["mousefr1", "mouse fr1"],
+    # === MOUSE PROGRAMS ===
+    "MOUSE - FR1": ["mousefr1", "mouse fr1", "fr1mouse"],
+    "MOUSE - PR": ["mousepr", "mouse pr", "pr mouse"],
+    "MOUSE - EXTENDED ACCESS": ["mouseextendedaccess", "mouseextended", "mouse extended access"],
 }
 
 # ────────────────────────────────────────────────
@@ -291,9 +315,9 @@ DEFAULT_VARIABLE_MAPPINGS: Dict[str, Dict[str, Any]] = {
     "RAT - DISCRETE TRIAL": map_rat_fr,
     "RAT - FLUSH": map_flush,
     "RAT - WITHDRAWAL": map_withdrawal,
-    "MOUSE - EXTENDED ACCESS": map_mouse,
+    "MOUSE - FR1": map_mouse_fr1,
     "MOUSE - PR": map_mouse_pr,
-    "MOUSE - FR1": map_mouse,
+    "MOUSE - EXTENDED ACCESS": map_mouse_extended_access,
 }
 
 def normalize_msn(msn: str) -> str:
