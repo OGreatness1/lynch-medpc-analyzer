@@ -117,14 +117,14 @@ map_withdrawal = {
 # ────────────────────────────────────────────────
 
 map_mouse_fr1 = {
-    "infusions": "I",
-    "active_presses": "J",
-    "inactive_presses": "K",
+    "infusions": "B(2)",
+    "active_presses": "B(0)",
+    "inactive_presses": "B(1)",
     "infusion_timestamps": "G",
     "active_timestamps": "L",           # All active nosepoke times
     "inactive_timestamps": "R",         # All inactive nosepoke times
     "duration": "S",
-    "weight": "A",
+    "weight": "A(6)",                   # Corrected index for FR1
     "infusion_time": "A",
     "pr_schedule": "P",                 # Progressive ratio sequence
     "z_params": "Z",                    # Session parameters
@@ -134,15 +134,15 @@ map_mouse_fr1 = {
 }
 
 map_mouse_pr = {
-    "infusions": "I",
-    "active_presses": "J",
-    "inactive_presses": "K",
+    "infusions": "B(2)",
+    "active_presses": "B(0)",
+    "inactive_presses": "B(1)",
     "active_timestamps": "L",
     "inactive_timestamps": "R",
     "infusion_timestamps": "G",
     "duration": "S",
     "breakpoint": "A",
-    "weight": "A",
+    "weight": "A(3)",                   # Corrected index for PR
     "infusion_time": "A",
     "pr_schedule": "P",
     "z_params": "Z",
@@ -152,14 +152,14 @@ map_mouse_pr = {
 }
 
 map_mouse_extended_access = {
-    "infusions": "I",
-    "active_presses": "J",
-    "inactive_presses": "K",
+    "infusions": "B(2)",
+    "active_presses": "B(0)",
+    "inactive_presses": "B(1)",
     "infusion_timestamps": "G",
     "active_timestamps": "L",
     "inactive_timestamps": "R",
     "duration": "S",
-    "weight": "A",
+    "weight": "A(6)",                   # Assuming EXT shares FR1 array structure
     "infusion_time": "A",
     "pr_schedule": "P",
     "z_params": "Z",
@@ -167,6 +167,7 @@ map_mouse_extended_access = {
     "W_value": "B",
     "T_value": "B",
 }
+
 # ────────────────────────────────────────────────
 # MSN pattern matching (program name → list of normalized substrings)
 # ────────────────────────────────────────────────
