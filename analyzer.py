@@ -1,5 +1,6 @@
 import pandas as pd
-from typing import List, Tuple, Optional, Set, Dict
+from typing import List, Tuple, Optional, Set, Dict, Any  # <-- Added Any
+import re  # <-- Added regex
 import streamlit as st
 from config import DEFAULT_MSN_PATTERNS, DEFAULT_VARIABLE_MAPPINGS
 from parser import ParsedSession
@@ -137,9 +138,36 @@ def robust_parse_date(date_str: str) -> pd.Timestamp:
     return pd.NaT
 
 
-def get_val(session: ParsedSession, var_name: str, default: float = 0.0) -> float:
-    """Safely retrieve scalar value."""
-    return float(session.scalars.get(var_name, default))
+def get_val(session: ParsedSession, var_name: Any, default: Any = 0.0) -> Any:
+    """Safely retrieve scalar value, specific array index, or full array."""
+    if not var_name:
+        return default
+        
+    if isinstance(var_name, list):
+        if len(var_name) > 0:
+            var_name = var_name[0]
+        else:
+            return default
+            
+    var_str = str(var_name)
+
+    # 1. Handle specific array indices (e.g., "B(2)" or "A(6)")
+    match = re.match(r"([A-Z])\((\d+)\)", var_str)
+    if match:
+        arr_key, idx = match.group(1), int(match.group(2))
+        if arr_key in session.arrays and len(session.arrays[arr_key]) > idx:
+            return float(session.arrays[arr_key][idx])
+        return default
+
+    # 2. Handle full array requests (e.g., "L" for timestamps)
+    if var_str in session.arrays:
+        return session.arrays[var_str]
+
+    # 3. Handle standard scalars (e.g., "I")
+    try:
+        return float(session.scalars.get(var_str, default))
+    except (ValueError, TypeError):
+        return default
 
 
 def calculate_duration(session: ParsedSession, mapping: dict) -> float:
@@ -274,8 +302,9 @@ def process_sessions(
         }
 
          # ─── ADVANCED MOUSE PROCESSING (L, R, P, Z arrays) ───
+        # ─── ADVANCED MOUSE PROCESSING (L, R, P, Z arrays) ───
         if mapping.get("special_processing") == "MOUSE_ADVANCED":
-            # Mouse files use I = infusions, J = active, K = inactive
+            # Mouse files use B array for advanced timeout tracking
             b_array = sess.arrays.get("B", [])
             
             row["timeout_active"]        = b_array[6] if len(b_array) > 6 else 0
@@ -283,10 +312,11 @@ def process_sessions(
             row["post_session_active"]   = b_array[8] if len(b_array) > 8 else 0
             row["post_session_inactive"] = b_array[9] if len(b_array) > 9 else 0
 
-            row["active_timestamps"]     = sess.arrays.get("L", [])
-            row["inactive_timestamps"]   = sess.arrays.get("R", [])
-            row["pr_schedule"]           = sess.arrays.get("P", [])
-            row["session_params"]        = sess.arrays.get("Z", [])
+            # Dynamically map arrays using upgraded get_val
+            row["active_timestamps"]     = get_val(sess, mapping.get("active_timestamps", "L"), [])
+            row["inactive_timestamps"]   = get_val(sess, mapping.get("inactive_timestamps", "R"), [])
+            row["pr_schedule"]           = get_val(sess, mapping.get("pr_schedule", "P"), [])
+            row["session_params"]        = get_val(sess, mapping.get("z_params", "Z"), [])
 
         else:
             # For all other programs (rats, etc.), set default values
@@ -329,7 +359,11 @@ def process_sessions(
     df_hourly   = pd.DataFrame(all_hourly)
 
     if not df_sessions.empty:
+        # Sort chronologically
         df_sessions = df_sessions.sort_values(["canonical_subject", "start_date"])
+        # ADDED: Calculate relative session day
+        df_sessions['session_day'] = df_sessions.groupby(['canonical_subject', 'program_name']).cumcount() + 1
+        
     if not df_hourly.empty:
         df_hourly = df_hourly.sort_values(["canonical_subject", "start_date", "hour"])
 
