@@ -117,6 +117,49 @@ def create_interactive_plot(data, x, y, title, hue=None, kind="line", color_disc
 # Specialised plots
 # ────────────────────────────────────────────────
 
+def create_hourly_line_plot(hr: pd.DataFrame, title: str = "Avg Infusions by Hour of Session"):
+    """
+    Plot mean infusion events per hour of session, averaged across all sessions
+    per subject.  Each subject gets one smooth line (hour 0 → max hour).
+
+    WHY this exists instead of passing sub_h raw to create_interactive_plot:
+    sub_h has one row per (subject, session, hour).  Plotting that directly
+    with x="hour" draws one continuous line that connects hour values across
+    sessions in row order, producing sawtooth cycles as the hour axis resets
+    for each new session.  Aggregating first collapses to one row per
+    (subject, hour) so each subject's line is monotonically left-to-right.
+    """
+    if hr.empty or "infusion_events" not in hr.columns:
+        return go.Figure().update_layout(title=f"{title} — No Data")
+
+    agg = (
+        hr.groupby(["canonical_subject", "hour"])["infusion_events"]
+        .mean()
+        .reset_index()
+        .rename(columns={"infusion_events": "avg_infusion_events"})
+        .sort_values(["canonical_subject", "hour"])
+    )
+
+    fig = px.line(
+        agg,
+        x="hour",
+        y="avg_infusion_events",
+        color="canonical_subject",
+        title=title,
+        markers=True,
+        color_discrete_sequence=LYNCH_COLORS,
+    )
+    fig.update_layout(
+        template="plotly_white",
+        height=600,
+        xaxis_title="Hour of Session",
+        yaxis_title="Avg Infusion Events",
+        legend_title_text="Subject",
+        xaxis=dict(dtick=1),
+    )
+    return fig
+
+
 def create_efficiency_trend(daily: pd.DataFrame):
     if daily.empty or "total_active_presses" not in daily.columns:
         return go.Figure().update_layout(title="Efficiency Trend")
