@@ -6,6 +6,7 @@ from config import DEFAULT_MSN_PATTERNS, DEFAULT_VARIABLE_MAPPINGS
 from parser import ParsedSession
 from utils import canonicalize_id, extract_gender, normalize_msn
 
+# ─── Pump and drug constants ──────────────────────────────────────────────────
 PUMP_RATE_ML_SEC = 0.0172  # ml/sec
 
 AVG_INF_DUR_COCAINE  = 4.0
@@ -72,19 +73,21 @@ DEFAULT_WEIGHT_G = 300.0
 
 def _round_weight_to_table(weight_g: float) -> int:
     """
-    Round weight to the nearest 10g interval used in the duration lookup tables.
-    Clamps to [100, 890] — the table bounds.
+    Round weight to the nearest 10 g interval used in the duration lookup
+    tables, and clamp to the [100, 890] bounds those tables cover.
+    e.g. 305 g → 300, 347 g → 350
     """
     rounded = round(weight_g / 10) * 10
     return max(100, min(890, rounded))
 
 
 def robust_parse_date(date_str: str) -> pd.Timestamp:
+    """Try multiple common MedPC date formats."""
     if not date_str or pd.isna(date_str):
         return pd.NaT
     formats = [
         "%m/%d/%y", "%m/%d/%Y", "%m-%d-%y", "%m-%d-%Y",
-        "%Y-%m-%d", "%d/%m/%y", "%d-%m-%Y", "%Y/%m/%d"
+        "%Y-%m-%d", "%d/%m/%y", "%d-%m-%Y", "%Y/%m/%d",
     ]
     for fmt in formats:
         try:
@@ -94,37 +97,35 @@ def robust_parse_date(date_str: str) -> pd.Timestamp:
     return pd.NaT
 
 
-def get_val(session: ParsedSession, var_name: Any, default: Any = 0.0) -> float:
+def get_val(session: ParsedSession, var_name: Any, default: float = 0.0) -> float:
     """
-    Safely retrieve a scalar value or specific array index as a float.
+    Safely retrieve a value from a session as a float.
 
-    Handles:
-      - None  → returns default (used for explicit "no infusions" sentinels)
-      - list  → uses first element if non-empty
-      - "B(2)" style → array index lookup
-      - plain letter → scalar lookup
+    Handles four input styles:
+      None          → return default  (explicit "no variable" sentinel)
+      []            → return default  (empty list mapping)
+      "B(2)"        → array index lookup  (mouse B-array style)
+      "I" / "R" etc → scalar lookup
     """
     if var_name is None:
         return float(default)
 
     if isinstance(var_name, list):
-        if len(var_name) > 0:
-            var_name = var_name[0]
-        else:
+        if not var_name:
             return float(default)
+        var_name = var_name[0]
 
     var_str = str(var_name)
 
-    # Handle specific array indices for mice (e.g. "B(2)" or "A(6)")
-    match = re.match(r"([A-Z])\((\d+)\)", var_str)
-    if match:
-        arr_key, idx = match.group(1), int(match.group(2))
+    # Array-indexed form e.g. "B(2)" or "A(6)"
+    m = re.match(r"^([A-Z])\((\d+)\)$", var_str)
+    if m:
+        arr_key = m.group(1)
+        idx     = int(m.group(2))
         arr = session.arrays.get(arr_key, [])
-        if len(arr) > idx:
-            return float(arr[idx])
-        return float(default)
+        return float(arr[idx]) if len(arr) > idx else float(default)
 
-    # Standard scalar lookup
+    # Standard scalar
     try:
         return float(session.scalars.get(var_str, default))
     except (ValueError, TypeError):
@@ -133,18 +134,19 @@ def get_val(session: ParsedSession, var_name: Any, default: Any = 0.0) -> float:
 
 def calculate_duration(session: ParsedSession, mapping: dict) -> float:
     """
-    Extract session duration in seconds from the session data.
+    Extract session duration in seconds.
 
-    Mapping keys checked (in order):
-      "duration"      → raw MedPC variable letter (e.g. "Z"), value already in seconds
+    Checks mapping keys in this order:
+      "duration"      → MedPC variable letter (e.g. "Z"), value in seconds
       "duration_sec"  → explicit seconds key
-      "duration_min"  → minutes → converted to seconds
-      "duration_hour" → hours   → converted to seconds
+      "duration_min"  → minutes converted to seconds
+      "duration_hour" → hours converted to seconds
+
+    NOTE: all current rat and mouse mappings use "duration": "Z".
+    The _sec/_min/_hour variants are kept for custom/legacy mappings.
     """
-    # Primary key used by all existing rat/mouse mappings
     if "duration" in mapping and mapping["duration"] is not None:
         return get_val(session, mapping["duration"])
-    # Legacy / explicit unit keys
     if "duration_sec" in mapping:
         return get_val(session, mapping["duration_sec"])
     if "duration_min" in mapping:
@@ -161,7 +163,7 @@ def process_sessions(
     custom_mappings: Optional[Dict] = None,
     avg_weight_g: float = DEFAULT_WEIGHT_G,
     drug_type: str = "None",
-    conc_mgml: float = 1.0
+    conc_mgml: float = 1.0,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, Set[str]]:
 
     patterns = custom_patterns or DEFAULT_MSN_PATTERNS
@@ -171,7 +173,7 @@ def process_sessions(
     all_hourly = []
     found      = set()
 
-    # Weight lookup key — rounded to nearest 10g, clamped to table range
+    # Pre-compute weight key once — avoids repeated rounding inside the loop
     weight_key = _round_weight_to_table(avg_weight_g)
 
     for sess in sessions:
@@ -183,15 +185,15 @@ def process_sessions(
             continue
 
         found.add(canon)
-        gender   = extract_gender(canon)
-        raw_msn  = sess.meta.get("MSN", "")
+        gender  = extract_gender(canon)
+        raw_msn = sess.meta.get("MSN", "")
         norm_msn = normalize_msn(raw_msn)
 
-        # ── MSN → program name resolution ──────────────────────────────────
-        # dict insertion order is preserved (Python 3.7+); more specific
-        # patterns appear first in DEFAULT_MSN_PATTERNS — do NOT reorder.
+        # ── MSN → program name ──────────────────────────────────────────────
+        # Dict insertion order is preserved (Python 3.7+).  More specific
+        # patterns are listed first in DEFAULT_MSN_PATTERNS — do NOT reorder.
         prog    = "UNMAPPED"
-        mapping = mappings.get("RAT - FR20", {})   # safe fallback
+        mapping = mappings.get("RAT - FR20", {})   # safe scalar-only fallback
 
         for name, pats in patterns.items():
             for pat in pats:
@@ -214,22 +216,23 @@ def process_sessions(
         else:
             inf_dur_sec = COCAINE_1_5MGKG_DUR.get(weight_key, AVG_INF_DUR_COCAINE)
 
-        # ── Infusion count ──────────────────────────────────────────────────
-        # mapping["infusions"] may be None (explicit sentinel for protocols
-        # with no IV infusions — e.g. extinction, food training, flush).
-        # get_val handles None → returns 0.0 safely.
-        infusions_key = mapping.get("infusions", "I")
-        infusion_count = get_val(sess, infusions_key)
+        # ── Core counts ─────────────────────────────────────────────────────
+        # mapping["infusions"] may be None for protocols with no IV drug
+        # delivery (extinction, food, flush, withdrawal).  get_val(None) = 0.
+        infusion_count   = get_val(sess, mapping.get("infusions",       "I"))
+        active_presses   = get_val(sess, mapping.get("active_presses",  "R"))
+        inactive_presses = get_val(sess, mapping.get("inactive_presses","L"))
 
-        # ── Pump time (flush protocol only) ────────────────────────────────
-        # For flush, "pump_time" maps to the actual pump duration scalar "I".
-        # For all other protocols there is no pump_time key, so this is 0.
-        pump_time_raw = get_val(sess, mapping.get("pump_time"))  # None → 0.0
+        # ── Pump time ───────────────────────────────────────────────────────
+        # Only the flush protocol has a "pump_time" key in its mapping.
+        # For all others, mapping.get("pump_time") returns None → 0.0.
+        pump_time_raw = get_val(sess, mapping.get("pump_time"))
 
-        # ── Volume & intake estimates ───────────────────────────────────────
-        # volume = infusion_count × pump_rate (ml/s) × infusion_duration (s)
-        estimated_volume_ml    = infusion_count * PUMP_RATE_ML_SEC * inf_dur_sec
-        estimated_intake_mgkg  = (
+        # ── Volume & intake ─────────────────────────────────────────────────
+        # Correct formula: infusion_count × pump_rate (ml/s) × inf_duration (s)
+        # (v1 was missing the inf_dur_sec factor, giving ml/s not ml)
+        estimated_volume_ml   = infusion_count * PUMP_RATE_ML_SEC * inf_dur_sec
+        estimated_intake_mgkg = (
             infusion_count * conc_mgml * PUMP_RATE_ML_SEC * inf_dur_sec
             / (avg_weight_g / 1000)
         ) if conc_mgml > 0 and avg_weight_g > 0 else 0.0
@@ -249,33 +252,31 @@ def process_sessions(
                 pd.notna(end_dt) and pd.notna(start_dt) and (end_dt > start_dt)
             ),
             "duration_sec":      duration_sec,
-            "active_presses":    get_val(sess, mapping.get("active_presses",   "R")),
-            "inactive_presses":  get_val(sess, mapping.get("inactive_presses", "L")),
+            "active_presses":    active_presses,
+            "inactive_presses":  inactive_presses,
             "infusions":         infusion_count,
-            # pump_time_sec: for flush protocol, the raw pump time scalar;
-            # for all others, 0 (no pump_time key in mapping).
             "pump_time_sec":     pump_time_raw,
-            # breakpoint: singular key matches config map_rat_pr["breakpoint"]
-            "breakpoints":       get_val(sess, mapping.get("breakpoint", None)),
-            "retrievals":        get_val(sess, mapping.get("retrievals", None)),
-            "responses":         get_val(sess, mapping.get("responses",  None)),
+            # "breakpoint" singular matches map_rat_pr["breakpoint"] key
+            "breakpoints":       get_val(sess, mapping.get("breakpoint")),
+            "retrievals":        get_val(sess, mapping.get("retrievals")),
+            "responses":         get_val(sess, mapping.get("responses")),
             "W_value":           get_val(sess, mapping.get("W_value", "W")),
             "T_value":           get_val(sess, mapping.get("T_value", "T")),
             "timeout_presses_per_inf": (
-                get_val(sess, mapping.get("W_value", "W")) /
-                (infusion_count + 1e-6)
+                get_val(sess, mapping.get("W_value", "W")) / (infusion_count + 1e-6)
             ),
-            "estimated_volume_ml":    estimated_volume_ml,
-            "estimated_inf_dur_sec":  inf_dur_sec,
-            "estimated_intake_mgkg":  estimated_intake_mgkg,
-            "U_value":   get_val(sess, mapping.get("U_value", None)),
-            "V_value":   get_val(sess, mapping.get("V_value", None)),
+            "estimated_volume_ml":   estimated_volume_ml,
+            "estimated_inf_dur_sec": inf_dur_sec,
+            "estimated_intake_mgkg": estimated_intake_mgkg,
+            "U_value": get_val(sess, mapping.get("U_value")),
+            "V_value": get_val(sess, mapping.get("V_value")),
+            # Mouse-specific fields — overwritten below for MOUSE_ADVANCED programs
             "timeout_active":        0,
             "timeout_inactive":      0,
             "post_session_active":   0,
             "post_session_inactive": 0,
-            "pr_schedule":    [],
-            "session_params": [],
+            "pr_schedule":           [],
+            "session_params":        [],
             "Box":  sess.meta.get("Box",  ""),
             "Room": sess.meta.get("Room", "") or sess.meta.get("Experiment", ""),
         }
@@ -305,28 +306,26 @@ def process_sessions(
         all_rows.append(row)
 
         # ── Hourly binning ──────────────────────────────────────────────────
-        # Only emit a row for hours that actually had events.
-        # Zero-padding every hour caused sawtooth/cycling plots because
-        # Plotly connected the zero-tails at the end of each session to the
-        # rising values at the start of the next one.
-        # session_day is stored on each row so plots can facet or filter
-        # by day without having to re-join against df_sessions.
+        # Use the mapping's own timestamp keys (not hard-coded "I" / "R").
+        # v1 used "infusion_times" / "active_times" — those keys don't exist
+        # in any mapping, so it always fell back to "I" and "R" regardless
+        # of program.  The correct keys are "infusion_timestamps" / "active_timestamps".
+        #
+        # Only emit rows for hours that actually had events — emitting a row
+        # for every hour from 0 to max_h produced sawtooth plots.
         inf_ts_key = mapping.get("infusion_timestamps", "I")
         act_ts_key = mapping.get("active_timestamps",   "R")
 
-        if inf_ts_key in sess.arrays or act_ts_key in sess.arrays:
-            ts_inf = sess.arrays.get(inf_ts_key, []) if inf_ts_key else []
-            ts_act = sess.arrays.get(act_ts_key, []) if act_ts_key else []
+        ts_inf = sess.arrays.get(inf_ts_key, []) if inf_ts_key else []
+        ts_act = sess.arrays.get(act_ts_key, []) if act_ts_key else []
 
-            # Determine the set of hours that have at least one event
-            active_hours = set()
+        if ts_inf or ts_act:
+            active_hours: set = set()
             for t in ts_inf:
                 active_hours.add(int(t // 3600))
             for t in ts_act:
                 active_hours.add(int(t // 3600))
 
-            # session_day not yet computed — use a placeholder; it will be
-            # back-filled after df_sessions is built (see below)
             for h in sorted(active_hours):
                 all_hourly.append({
                     "canonical_subject": canon,
@@ -345,8 +344,8 @@ def process_sessions(
 
     if not df_sessions.empty:
         df_sessions = df_sessions.sort_values(["canonical_subject", "start_date"])
-        # session_day resets per subject+program (intentional: each protocol
-        # gets its own 1-based day counter)
+        # session_day resets per subject+program so each protocol has its own
+        # 1-based day counter — intentional.
         df_sessions["session_day"] = (
             df_sessions
             .groupby(["canonical_subject", "program_name"])
@@ -355,16 +354,16 @@ def process_sessions(
 
     if not df_hourly.empty:
         df_hourly = df_hourly.sort_values(["canonical_subject", "start_date", "hour"])
-
-        # Back-fill session_day from df_sessions so hourly plots can use it
+        # Back-fill session_day so hourly plots can reference it
         if not df_sessions.empty and "session_day" in df_sessions.columns:
-            day_map = df_sessions[
-                ["canonical_subject", "program_name", "start_date", "session_day"]
-            ].drop_duplicates()
+            day_map = (
+                df_sessions[["canonical_subject", "program_name", "start_date", "session_day"]]
+                .drop_duplicates()
+            )
             df_hourly = df_hourly.merge(
                 day_map,
                 on=["canonical_subject", "program_name", "start_date"],
-                how="left"
+                how="left",
             )
 
     return df_sessions, df_hourly, found
@@ -375,7 +374,7 @@ def generate_pattern_flags(
     min_active: int = 5,
     max_inactive_ratio: float = 0.5,
     min_duration_min: int = 30,
-    escalation_threshold: int = 30
+    escalation_threshold: int = 30,
 ) -> pd.DataFrame:
     if df.empty:
         return df
@@ -414,10 +413,12 @@ def create_daily_summary(df_sessions: pd.DataFrame) -> pd.DataFrame:
         df["start_date"] = pd.to_datetime(df["start_date"], errors="coerce")
         df = df.dropna(subset=["start_date"])
 
-    if "session_day" not in df.columns:
-        df["session_day"] = 1
+    df["date"] = df["start_date"].dt.date
 
-    group_keys = ["canonical_subject", "gender", "program_name", "session_day"]
+    # Group by subject + gender + program + calendar date.
+    # Including program_name prevents sessions from different protocols
+    # on the same calendar date from being merged into one row.
+    group_keys = ["canonical_subject", "gender", "program_name", "date"]
 
     possible_agg = {
         "infusions":           "sum",
@@ -426,7 +427,6 @@ def create_daily_summary(df_sessions: pd.DataFrame) -> pd.DataFrame:
         "duration_sec":        "sum",
         "pump_time_sec":       "sum",
         "breakpoints":         "max",
-        "program_name":        lambda x: ", ".join(x.unique()),
         "start_date":          "min",
         "end_date":            "max",
         "Box":                 "first",
@@ -436,16 +436,16 @@ def create_daily_summary(df_sessions: pd.DataFrame) -> pd.DataFrame:
         "W_value":             "sum",
         "T_value":             "sum",
         "timeout_presses_per_inf": "mean",
-        "timeout_active":      "sum",
-        "timeout_inactive":    "sum",
-        "post_session_active": "sum",
-        "post_session_inactive": "sum",
-        "estimated_volume_ml":   "sum",
-        "estimated_inf_dur_sec": "mean",
-        "estimated_intake_mgkg": "sum",
+        "timeout_active":          "sum",
+        "timeout_inactive":        "sum",
+        "post_session_active":     "sum",
+        "post_session_inactive":   "sum",
+        "estimated_volume_ml":     "sum",
+        "estimated_inf_dur_sec":   "mean",
+        "estimated_intake_mgkg":   "sum",
     }
 
-    # program_name is already a group key, so remove it from agg to avoid conflict
+    # Only aggregate columns that exist, and skip group keys
     agg_dict = {
         col: func
         for col, func in possible_agg.items()
@@ -455,50 +455,49 @@ def create_daily_summary(df_sessions: pd.DataFrame) -> pd.DataFrame:
     daily = df.groupby(group_keys).agg(agg_dict).reset_index()
 
     rename_map = {
-        "infusions":              "total_infusions",
-        "active_presses":         "total_active_presses",
-        "inactive_presses":       "total_inactive_presses",
-        "duration_sec":           "total_duration_sec",
-        "start_date":             "first_session_time",
-        "end_date":               "last_session_time",
-        "overnight_session":      "had_overnight_session",
-        "session_span_days":      "max_session_span_days",
-        "W_value":                "total_W_value",
-        "T_value":                "total_T_value",
-        "timeout_presses_per_inf":     "avg_timeout_presses_per_inf",
-        "timeout_active":              "total_timeout_active",
-        "timeout_inactive":            "total_timeout_inactive",
-        "post_session_active":         "total_post_session_active",
-        "post_session_inactive":       "total_post_session_inactive",
-        "estimated_volume_ml":         "total_estimated_volume_ml",
-        "estimated_inf_dur_sec":       "avg_estimated_inf_dur_sec",
-        "estimated_intake_mgkg":       "total_estimated_intake_mgkg",
+        "infusions":               "total_infusions",
+        "active_presses":          "total_active_presses",
+        "inactive_presses":        "total_inactive_presses",
+        "duration_sec":            "total_duration_sec",
+        "start_date":              "first_session_time",
+        "end_date":                "last_session_time",
+        "overnight_session":       "had_overnight_session",
+        "session_span_days":       "max_session_span_days",
+        "W_value":                 "total_W_value",
+        "T_value":                 "total_T_value",
+        "timeout_presses_per_inf": "avg_timeout_presses_per_inf",
+        "timeout_active":          "total_timeout_active",
+        "timeout_inactive":        "total_timeout_inactive",
+        "post_session_active":     "total_post_session_active",
+        "post_session_inactive":   "total_post_session_inactive",
+        "estimated_volume_ml":     "total_estimated_volume_ml",
+        "estimated_inf_dur_sec":   "avg_estimated_inf_dur_sec",
+        "estimated_intake_mgkg":   "total_estimated_intake_mgkg",
     }
 
     daily = daily.rename(columns={k: v for k, v in rename_map.items() if k in daily.columns})
+    daily["session_count"] = df.groupby(group_keys).size().values
 
-    # session_count: number of raw sessions merged into each day-group row
-    daily["session_count"] = (
-        df.groupby(group_keys).size().values
-    )
-
-    return daily.sort_values(["canonical_subject", "program_name", "session_day"])
+    return daily.sort_values(["canonical_subject", "program_name", "date"])
 
 
 def add_non_zero_inf_days(df_sessions: pd.DataFrame) -> pd.DataFrame:
     if df_sessions.empty:
-        return pd.DataFrame(columns=["canonical_subject", "program_name", "non_zero_inf_days", "total_non_zero_days"])
+        return pd.DataFrame(
+            columns=["canonical_subject", "program_name", "non_zero_inf_days", "total_non_zero_days"]
+        )
 
     df = df_sessions.copy()
 
     if "start_date" not in df.columns:
         st.warning("No 'start_date' column — cannot compute non-zero infusion days.")
-        return pd.DataFrame(columns=["canonical_subject", "program_name", "non_zero_inf_days", "total_non_zero_days"])
+        return pd.DataFrame(
+            columns=["canonical_subject", "program_name", "non_zero_inf_days", "total_non_zero_days"]
+        )
 
     df["start_date"] = pd.to_datetime(df["start_date"], errors="coerce")
     df = df.dropna(subset=["start_date"])
     df["date"] = df["start_date"].dt.date
-
     df["infusions"] = pd.to_numeric(df["infusions"], errors="coerce").fillna(0)
 
     daily_inf = (
@@ -522,15 +521,13 @@ def add_non_zero_inf_days(df_sessions: pd.DataFrame) -> pd.DataFrame:
     )
 
     result = per_program.merge(total_days, on="canonical_subject", how="left")
-    result = result.fillna({"total_non_zero_days": 0})
-
-    return result
+    return result.fillna({"total_non_zero_days": 0})
 
 
 def report_missing_and_box_room(
     expected_list: List[str],
     found_set: Set[str],
-    df: pd.DataFrame
+    df: pd.DataFrame,
 ):
     canon_expected = {canonicalize_id(s) for s in expected_list if s.strip()}
     missing = sorted(canon_expected - found_set)
@@ -556,22 +553,19 @@ def report_missing_and_box_room(
     non_zero_df = add_non_zero_inf_days(df)
 
     summary = summary.merge(
-        non_zero_df,
-        on=["canonical_subject", "program_name"],
-        how="left"
+        non_zero_df, on=["canonical_subject", "program_name"], how="left"
     ).fillna({"non_zero_inf_days": 0, "total_non_zero_days": 0})
 
     summary = summary.sort_values(
-        ["total_non_zero_days", "non_zero_inf_days", "session_count"],
-        ascending=False
+        ["total_non_zero_days", "non_zero_inf_days", "session_count"], ascending=False
     )
 
     st.dataframe(
         summary.style
         .format({
-            "non_zero_inf_days":    lambda x: f"{int(x)}" if x > 0 else "-",
-            "total_non_zero_days":  lambda x: f"{int(x)}" if x > 0 else "-",
-            "session_count":        "{:.0f}",
+            "non_zero_inf_days":   lambda x: f"{int(x)}" if x > 0 else "-",
+            "total_non_zero_days": lambda x: f"{int(x)}" if x > 0 else "-",
+            "session_count":       "{:.0f}",
         })
         .highlight_max(subset=["session_count"],       color="#d4edda")
         .highlight_max(subset=["non_zero_inf_days"],   color="#fff3cd")
