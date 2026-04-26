@@ -217,11 +217,12 @@ def process_sessions(
             inf_dur_sec = COCAINE_1_5MGKG_DUR.get(weight_key, AVG_INF_DUR_COCAINE)
 
         # ── Core counts ─────────────────────────────────────────────────────
-        # mapping["infusions"] may be None for protocols with no IV drug
-        # delivery (extinction, food, flush, withdrawal).  get_val(None) = 0.
+        # All mappings now specify the correct variable letter explicitly.
+        # Fallbacks apply only to UNMAPPED programs — return 0 rather than
+        # reading an arbitrary letter that may mean something different.
         infusion_count   = get_val(sess, mapping.get("infusions",       "I"))
         active_presses   = get_val(sess, mapping.get("active_presses",  "R"))
-        inactive_presses = get_val(sess, mapping.get("inactive_presses","L"))
+        inactive_presses = get_val(sess, mapping.get("inactive_presses"))  # None→0 for unmapped
 
         # ── Pump time ───────────────────────────────────────────────────────
         # Only the flush protocol has a "pump_time" key in its mapping.
@@ -306,45 +307,23 @@ def process_sessions(
         all_rows.append(row)
 
         # ── Hourly binning ──────────────────────────────────────────────────
-        # GROUND TRUTH: the session-level infusion scalar (infusion_count) is
-        # always more reliable than counting array entries, because:
-        #   - Intermittent access maps infusion_timestamps → "L" (inactive lever
-        #     array) — that array has far more entries than actual infusions.
-        #   - Mouse "G" array may store infusion parameters (multiple values per
-        #     infusion) rather than one timestamp per infusion.
-        #   - Parser row-index artefacts can add spurious values.
+        # Each protocol's mapping now points to the correct timestamp arrays:
+        #   FR/Fent/PR → W (per-infusion timestamps written by S.S.9)
+        #   Intermittent access → O (infusion timestamps written by S.S.15)
+        #   Mouse → G (infusion), L (active nosepoke)
         #
-        # Strategy:
-        #   1. For protocols that have a real per-infusion timestamp array
-        #      (J for rats, G for mice), use those timestamps BUT only keep
-        #      the first infusion_count entries — so the total across all hours
-        #      always equals the session scalar exactly.
-        #   2. For INTERMITTENT ACCESS, "L" is the inactive lever array, not
-        #      infusion timestamps.  Use active timestamps (P array) for the
-        #      active_events column and skip infusion_events entirely (leave 0)
-        #      since there are no per-infusion timestamps in that protocol.
-        #   3. active_events is always derived from the active_timestamps key
-        #      and is not subject to the same cap (it's a behaviour count,
-        #      not expected to equal the infusion scalar).
-
+        # We cap ts_inf at the known infusion scalar count so that the sum of
+        # infusion_events across all hours always equals the session scalar
+        # exactly — guards against arrays containing extra values (parameters,
+        # trailing zeros, etc.).
         inf_ts_key = mapping.get("infusion_timestamps")
         act_ts_key = mapping.get("active_timestamps")
 
-        # Determine whether this protocol has genuine per-infusion timestamps.
-        # Intermittent access uses "L" for infusion_timestamps which is actually
-        # the inactive lever array — skip infusion binning for this protocol.
-        is_intermittent = (prog == "RAT - INTERMITTENT ACCESS")
+        ts_inf_raw = sess.arrays.get(inf_ts_key, []) if inf_ts_key else []
+        ts_act     = sess.arrays.get(act_ts_key, []) if act_ts_key else []
 
-        ts_inf_raw = []
-        if inf_ts_key and not is_intermittent:
-            ts_inf_raw = sess.arrays.get(inf_ts_key, [])
-
-        ts_act = []
-        if act_ts_key:
-            ts_act = sess.arrays.get(act_ts_key, [])
-
-        # Cap ts_inf at the known infusion count so hourly sum == session scalar
-        n_inf = int(infusion_count)
+        # Cap infusion timestamps at known scalar count
+        n_inf  = int(infusion_count)
         ts_inf = ts_inf_raw[:n_inf] if ts_inf_raw else []
 
         if ts_inf or ts_act:
