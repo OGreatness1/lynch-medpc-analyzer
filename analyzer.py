@@ -138,36 +138,32 @@ def robust_parse_date(date_str: str) -> pd.Timestamp:
     return pd.NaT
 
 
-def get_val(session: ParsedSession, var_name: Any, default: Any = 0.0) -> Any:
-    """Safely retrieve scalar value, specific array index, or full array."""
+def get_val(session: ParsedSession, var_name: Any, default: Any = 0.0) -> float:
+    """Safely retrieve scalar value or specific array index as a float."""
     if not var_name:
-        return default
+        return float(default)
         
     if isinstance(var_name, list):
         if len(var_name) > 0:
             var_name = var_name[0]
         else:
-            return default
+            return float(default)
             
     var_str = str(var_name)
 
-    # 1. Handle specific array indices (e.g., "B(2)" or "A(6)")
+    # 1. Handle specific array indices for Mice (e.g., "B(2)" or "A(6)")
     match = re.match(r"([A-Z])\((\d+)\)", var_str)
     if match:
         arr_key, idx = match.group(1), int(match.group(2))
         if arr_key in session.arrays and len(session.arrays[arr_key]) > idx:
             return float(session.arrays[arr_key][idx])
-        return default
+        return float(default)
 
-    # 2. Handle full array requests (e.g., "L" for timestamps)
-    if var_str in session.arrays:
-        return session.arrays[var_str]
-
-    # 3. Handle standard scalars (e.g., "I")
+    # 2. Extract standard scalar for Rats (e.g., "I")
     try:
         return float(session.scalars.get(var_str, default))
     except (ValueError, TypeError):
-        return default
+        return float(default)
 
 
 def calculate_duration(session: ParsedSession, mapping: dict) -> float:
@@ -301,7 +297,6 @@ def process_sessions(
             "Room": sess.meta.get("Room", "") or sess.meta.get("Experiment", ""),
         }
 
-         # ─── ADVANCED MOUSE PROCESSING (L, R, P, Z arrays) ───
         # ─── ADVANCED MOUSE PROCESSING (L, R, P, Z arrays) ───
         if mapping.get("special_processing") == "MOUSE_ADVANCED":
             # Mouse files use B array for advanced timeout tracking
@@ -312,11 +307,11 @@ def process_sessions(
             row["post_session_active"]   = b_array[8] if len(b_array) > 8 else 0
             row["post_session_inactive"] = b_array[9] if len(b_array) > 9 else 0
 
-            # Dynamically map arrays using upgraded get_val
-            row["active_timestamps"]     = get_val(sess, mapping.get("active_timestamps", "L"), [])
-            row["inactive_timestamps"]   = get_val(sess, mapping.get("inactive_timestamps", "R"), [])
-            row["pr_schedule"]           = get_val(sess, mapping.get("pr_schedule", "P"), [])
-            row["session_params"]        = get_val(sess, mapping.get("z_params", "Z"), [])
+            # Pull array lists DIRECTLY to prevent scalar conflict
+            row["active_timestamps"]     = sess.arrays.get(mapping.get("active_timestamps", "L"), [])
+            row["inactive_timestamps"]   = sess.arrays.get(mapping.get("inactive_timestamps", "R"), [])
+            row["pr_schedule"]           = sess.arrays.get(mapping.get("pr_schedule", "P"), [])
+            row["session_params"]        = sess.arrays.get(mapping.get("z_params", "Z"), [])
 
         else:
             # For all other programs (rats, etc.), set default values
