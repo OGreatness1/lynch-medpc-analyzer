@@ -15,9 +15,7 @@ class MedPCParser:
         self.skipped_sessions: List[Tuple[str, str, str]] = []  # (filename, reason, snippet)
 
     def parse_file(self, content: str, filename: str) -> List[ParsedSession]:
-        """
-        Main entry point: split file into session blocks and parse each one.
-        """
+        """Split file into session blocks and parse each one."""
         session_blocks = self._extract_session_blocks(content)
         parsed = []
 
@@ -33,22 +31,16 @@ class MedPCParser:
         return parsed
 
     def _extract_session_blocks(self, content: str) -> List[str]:
-        """
-        Split raw MedPC export text into individual session blocks.
-        Looks for common delimiters: \\filename, Start Date:, ====== , blank lines + new MSN, etc.
-        """
         blocks = []
         current_lines = []
         lines = content.splitlines()
 
         for line in lines:
             stripped = line.strip()
-
-            # New session indicators
             if (
-                stripped.startswith("\\") and "MPC" in stripped.upper()  # \\PROGRAMNAME.MPC
+                (stripped.startswith("\\") and "MPC" in stripped.upper())
                 or stripped.startswith("Start Date:")
-                or re.match(r"={5,}", stripped)  # ===== separator
+                or re.match(r"={5,}", stripped)
                 or (stripped == "" and current_lines and "Start Date:" in "".join(current_lines))
             ):
                 if current_lines:
@@ -59,7 +51,6 @@ class MedPCParser:
             else:
                 current_lines.append(line)
 
-        # Don't forget the last block
         if current_lines:
             block = "\n".join(current_lines).strip()
             if len(block) > 150 and "Start Date:" in block:
@@ -74,15 +65,13 @@ class MedPCParser:
         arrays = {}
         i = 0
 
-        # 1. Metadata / Header (Subject, MSN, Start Date, Box, Room, etc.)
+        # 1. Metadata / Header
         while i < len(lines) and not re.match(r"^[A-Z]:\s", lines[i].strip()):
             line = lines[i].strip()
             if ":" in line and not line.startswith("\\"):
                 key_part, val_part = line.split(":", 1)
                 key = key_part.strip()
                 val = val_part.strip()
-
-                # Standard MedPC keys + extras we care about
                 known_keys = [
                     "Subject", "MSN", "Start Date", "End Date", "Box", "Room",
                     "Experiment", "Group", "Protocol", "File", "Comment"
@@ -91,7 +80,7 @@ class MedPCParser:
                     meta[key] = val
             i += 1
 
-        # 2. Scalars (A: 123.45    B: 0    etc.)
+        # 2. Scalars
         while i < len(lines):
             line = lines[i].strip()
             if re.match(r"^[A-Z]:\s*-?\d+(\.\d+)?", line):
@@ -100,11 +89,12 @@ class MedPCParser:
                     scalars[var] = float(val_str)
                 except ValueError:
                     pass
-            elif line.startswith("\\") or line.startswith("=" * 5) or not line:
-                break  # end of scalars, beginning of arrays or next block
+            # ─── CRITICAL FIX: Break scalar loop if it hits an Array Header (e.g., "A:") ───
+            elif re.match(r"^[A-Z]:$", line) or line.startswith("\\") or line.startswith("=" * 5) or not line:
+                break
             i += 1
 
-        # 3. Arrays (I: 12.3 45.6 ...  or multi-line)
+        # 3. Arrays
         current_var = None
         current_data = []
 
@@ -112,28 +102,16 @@ class MedPCParser:
             line = lines[i].strip()
 
             # New array header
-            m = re.match(r"^([A-Z]):", line)
+            m = re.match(r"^([A-Z]):$", line)
             if m:
-                # Save previous array if any
                 if current_var and current_data:
                     arrays[current_var] = current_data
-
                 current_var = m.group(1)
                 current_data = []
-                # Values may follow on same line
-                rest = line.split(":", 1)[1].strip()
-                if rest:
-                    try:
-                        current_data.extend(float(x) for x in rest.split() if x)
-                    except ValueError:
-                        pass
             
-            # Continuation line (Handle MedPC row indices like "0: 123.4")
+            # ─── CRITICAL FIX: Clean array rows (strip out "0:", "5:", etc.) ───
             elif current_var:
-                # Strip out the MedPC index (e.g., "0:", "5:") so we only have numbers left
                 clean_line = re.sub(r"^\d+:\s*", "", line)
-                
-                # Check if the remaining line is numeric
                 if clean_line and re.match(r"^[-\d\s\.eE]+$", clean_line.replace(" ", "")):
                     try:
                         vals = [float(x) for x in clean_line.split() if x.strip("-").replace(".", "").isdigit()]
@@ -143,11 +121,9 @@ class MedPCParser:
 
             i += 1
 
-        # Save last array
         if current_var and current_data:
             arrays[current_var] = current_data
 
-        # Require minimal useful data
         if not meta.get("Start Date") or not meta.get("Subject"):
             raise ValueError("Missing required metadata (Start Date or Subject)")
 
@@ -160,8 +136,4 @@ class MedPCParser:
         )
 
     def get_skipped_report(self) -> List[Dict]:
-        """For logging / display in app."""
-        return [
-            {"File": f, "Reason": r, "Snippet": s}
-            for f, r, s in self.skipped_sessions
-        ]
+        return [{"File": f, "Reason": r, "Snippet": s} for f, r, s in self.skipped_sessions]
