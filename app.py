@@ -17,7 +17,8 @@ from plotter import (
     create_cumulative_plot, create_discrimination_plot,
     create_pr_breakpoint_plot, create_efficiency_trend,
     create_response_rate_plot, create_hourly_heatmap,
-    create_mean_sem_trajectory
+    create_mean_sem_trajectory,
+    create_within_session_plot  # <--- ADDED
 )
 from utils import canonicalize_id
 
@@ -494,7 +495,38 @@ if 'df_sess' in st.session_state and st.session_state.df_sess is not None and no
                                         key=f"efficiency_subject_{sel}_{p}_{tab_idx}"
                                     )
 
+                                # ─── INSERT NEW TIMEPOINT GRAPH HERE ───
+                                st.subheader(f"Within-Session Timepoint Data — {p}")
+
+                                if "active_timestamps" in prog_sess.columns and "session_day" in prog_sess.columns:
+                                    # Create dropdown options combining Session Day and Date
+                                    session_options = prog_sess['session_day'].astype(str) + " (" + prog_sess['start_date'].astype(str) + ")"
+                                    
+                                    selected_session = st.selectbox(
+                                        "Select a session to view correct response timepoints:", 
+                                        options=session_options, 
+                                        key=f"ts_sel_{sel}_{p}_{tab_idx}"
+                                    )
+
+                                    if selected_session:
+                                        # Extract the selected Session Day number to filter
+                                        sel_day = int(selected_session.split(" ")[0])
+                                        session_data_row = prog_sess[prog_sess['session_day'] == sel_day].iloc[0]
+                                        
+                                        timestamps = session_data_row.get("active_timestamps", [])
+                                        duration = session_data_row.get("duration_sec", 0)
+
+                                        # Draw the step-plot
+                                        fig_ts = create_within_session_plot(timestamps, duration)
+                                        st.plotly_chart(fig_ts, use_container_width=True, key=f"ts_plot_{sel}_{p}_{tab_idx}")
+                                else:
+                                    st.info("Timepoint arrays (e.g., L) are not available or mapped for this program.")
+                                # ───────────────────────────────────────
+
                                 st.subheader(f"Sessions — {p}")
+                                st.dataframe(prog_sess)
+								
+								st.subheader(f"Sessions — {p}")
                                 st.dataframe(prog_sess)
 
                     st.divider()
