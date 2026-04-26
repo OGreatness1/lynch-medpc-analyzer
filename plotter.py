@@ -250,6 +250,41 @@ def create_response_rate_plot(sess: pd.DataFrame):
         kind="line"
     )
 
+def create_within_session_plot(active_timestamps, duration=None):
+    """Generates a cumulative step-plot for correct responses over 1 session."""
+    import plotly.graph_objects as go
+    import numpy as np
+
+    if not isinstance(active_timestamps, list) or len(active_timestamps) == 0:
+        fig = go.Figure()
+        fig.update_layout(title="No correct response timepoints (L) available for this session.")
+        return fig
+
+    # Y-values represent cumulative correct responses
+    y_vals = np.arange(1, len(active_timestamps) + 1)
+    
+    fig = go.Figure(go.Scatter(
+        x=active_timestamps,
+        y=y_vals,
+        mode='lines+markers',
+        line_shape='hv',  # Step-plot
+        name='Correct Responses',
+        line=dict(color='rgb(31, 119, 180)', width=2)
+    ))
+
+    max_time = max(active_timestamps) * 1.05
+    if duration and duration > 0:
+        max_time = max(max_time, duration)
+
+    fig.update_layout(
+        title="Within-Session Timepoint Data: Correct Responses",
+        xaxis_title="Time in Session (seconds)",
+        yaxis_title="Cumulative Correct Responses",
+        xaxis=dict(range=[0, max_time]),
+        template="plotly_white",
+        hovermode="x unified"
+    )
+    return fig
 
 def create_mean_sem_trajectory(daily: pd.DataFrame):
     """
