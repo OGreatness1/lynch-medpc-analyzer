@@ -104,7 +104,7 @@ class MedPCParser:
                 break  # end of scalars, beginning of arrays or next block
             i += 1
 
-        # 3. Arrays (I: 12.3 45.6 ...    or multi-line)
+        # 3. Arrays (I: 12.3 45.6 ...  or multi-line)
         current_var = None
         current_data = []
 
@@ -127,13 +127,19 @@ class MedPCParser:
                         current_data.extend(float(x) for x in rest.split() if x)
                     except ValueError:
                         pass
-            # Continuation line (numbers only or with spaces)
-            elif current_var and re.match(r"^[-\d\s\.eE]+$", line.replace(" ", "")):
-                try:
-                    vals = [float(x) for x in line.split() if x.strip("-").replace(".", "").isdigit()]
-                    current_data.extend(vals)
-                except ValueError:
-                    pass
+            
+            # Continuation line (Handle MedPC row indices like "0: 123.4")
+            elif current_var:
+                # Strip out the MedPC index (e.g., "0:", "5:") so we only have numbers left
+                clean_line = re.sub(r"^\d+:\s*", "", line)
+                
+                # Check if the remaining line is numeric
+                if clean_line and re.match(r"^[-\d\s\.eE]+$", clean_line.replace(" ", "")):
+                    try:
+                        vals = [float(x) for x in clean_line.split() if x.strip("-").replace(".", "").isdigit()]
+                        current_data.extend(vals)
+                    except ValueError:
+                        pass
 
             i += 1
 
