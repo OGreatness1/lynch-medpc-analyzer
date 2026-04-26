@@ -306,18 +306,46 @@ def process_sessions(
         all_rows.append(row)
 
         # ── Hourly binning ──────────────────────────────────────────────────
-        # Use the mapping's own timestamp keys (not hard-coded "I" / "R").
-        # v1 used "infusion_times" / "active_times" — those keys don't exist
-        # in any mapping, so it always fell back to "I" and "R" regardless
-        # of program.  The correct keys are "infusion_timestamps" / "active_timestamps".
+        # GROUND TRUTH: the session-level infusion scalar (infusion_count) is
+        # always more reliable than counting array entries, because:
+        #   - Intermittent access maps infusion_timestamps → "L" (inactive lever
+        #     array) — that array has far more entries than actual infusions.
+        #   - Mouse "G" array may store infusion parameters (multiple values per
+        #     infusion) rather than one timestamp per infusion.
+        #   - Parser row-index artefacts can add spurious values.
         #
-        # Only emit rows for hours that actually had events — emitting a row
-        # for every hour from 0 to max_h produced sawtooth plots.
-        inf_ts_key = mapping.get("infusion_timestamps", "I")
-        act_ts_key = mapping.get("active_timestamps",   "R")
+        # Strategy:
+        #   1. For protocols that have a real per-infusion timestamp array
+        #      (J for rats, G for mice), use those timestamps BUT only keep
+        #      the first infusion_count entries — so the total across all hours
+        #      always equals the session scalar exactly.
+        #   2. For INTERMITTENT ACCESS, "L" is the inactive lever array, not
+        #      infusion timestamps.  Use active timestamps (P array) for the
+        #      active_events column and skip infusion_events entirely (leave 0)
+        #      since there are no per-infusion timestamps in that protocol.
+        #   3. active_events is always derived from the active_timestamps key
+        #      and is not subject to the same cap (it's a behaviour count,
+        #      not expected to equal the infusion scalar).
 
-        ts_inf = sess.arrays.get(inf_ts_key, []) if inf_ts_key else []
-        ts_act = sess.arrays.get(act_ts_key, []) if act_ts_key else []
+        inf_ts_key = mapping.get("infusion_timestamps")
+        act_ts_key = mapping.get("active_timestamps")
+
+        # Determine whether this protocol has genuine per-infusion timestamps.
+        # Intermittent access uses "L" for infusion_timestamps which is actually
+        # the inactive lever array — skip infusion binning for this protocol.
+        is_intermittent = (prog == "RAT - INTERMITTENT ACCESS")
+
+        ts_inf_raw = []
+        if inf_ts_key and not is_intermittent:
+            ts_inf_raw = sess.arrays.get(inf_ts_key, [])
+
+        ts_act = []
+        if act_ts_key:
+            ts_act = sess.arrays.get(act_ts_key, [])
+
+        # Cap ts_inf at the known infusion count so hourly sum == session scalar
+        n_inf = int(infusion_count)
+        ts_inf = ts_inf_raw[:n_inf] if ts_inf_raw else []
 
         if ts_inf or ts_act:
             active_hours: set = set()
