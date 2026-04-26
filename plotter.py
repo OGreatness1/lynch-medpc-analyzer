@@ -8,14 +8,10 @@ import pandas as pd
 LYNCH_COLORS = px.colors.qualitative.Set2 + px.colors.qualitative.Pastel
 
 
-# ────────────────────────────────────────────────
-# Helper — detects date/session column automatically
-# PRIORITISES session_day (integer) over calendar dates
-# ────────────────────────────────────────────────
 def get_date_column(df: pd.DataFrame) -> str | None:
     """
-    Automatically detect the most likely x-axis column for time-series plots.
-    session_day is checked first so integer day numbering takes priority over
+    Detect the most appropriate x-axis column for time-series plots.
+    session_day (integer) is checked first and takes priority over
     calendar dates when both are present.
     """
     possible = ["session_day", "start_date", "first_session_time", "date", "end_date"]
@@ -26,14 +22,16 @@ def get_date_column(df: pd.DataFrame) -> str | None:
 
 
 def _is_integer_day_column(df: pd.DataFrame, col: str) -> bool:
-    """Return True if the column holds integer session-day numbers."""
+    """Return True when col holds integer session-day numbers (not dates)."""
     try:
-        return pd.api.types.is_integer_dtype(df[col]) or (
-            pd.api.types.is_float_dtype(df[col])
-            and df[col].dropna().apply(float.is_integer).all()
-        )
+        series = df[col].dropna()
+        if pd.api.types.is_integer_dtype(series):
+            return True
+        if pd.api.types.is_float_dtype(series):
+            return bool(series.apply(lambda x: x == int(x)).all())
     except Exception:
-        return False
+        pass
+    return False
 
 
 def create_plot(data, x, y, title, hue=None, kind="bar", palette="Set1", style=None, markers=True):
@@ -60,47 +58,48 @@ def create_plot(data, x, y, title, hue=None, kind="bar", palette="Set1", style=N
         plt.savefig(buf, format="png", dpi=150)
     except Exception as e:
         if "Done" not in str(e) and "RendererAgg" not in str(e):
-            pass  # swallow expected Agg completion signal
+            pass
     plt.close()
     buf.seek(0)
     return buf
 
 
-def create_interactive_plot(data, x, y, title, hue=None, kind="line", color_discrete_sequence=LYNCH_COLORS):
+def create_interactive_plot(
+    data, x, y, title, hue=None, kind="line",
+    color_discrete_sequence=LYNCH_COLORS
+):
     """Core interactive Plotly chart."""
     if data.empty:
-        fig = go.Figure()
-        fig.update_layout(title=f"No data available — {title}")
-        return fig
+        return go.Figure().update_layout(title=f"No data available — {title}")
 
     hover_cols = data.columns.tolist()
 
     if kind == "line":
         fig = px.line(
             data, x=x, y=y, color=hue, title=title, markers=True,
-            hover_data=hover_cols, color_discrete_sequence=color_discrete_sequence
+            hover_data=hover_cols, color_discrete_sequence=color_discrete_sequence,
         )
         fig.update_xaxes(tickangle=45)
     elif kind == "bar":
         fig = px.bar(
             data, x=x, y=y, color=hue, title=title, barmode="group",
-            hover_data=hover_cols, color_discrete_sequence=color_discrete_sequence
+            hover_data=hover_cols, color_discrete_sequence=color_discrete_sequence,
         )
     elif kind == "scatter":
         fig = px.scatter(
             data, x=x, y=y, color=hue, title=title, opacity=0.7,
             hover_data=hover_cols, marginal_x="box", marginal_y="box",
-            color_discrete_sequence=color_discrete_sequence
+            color_discrete_sequence=color_discrete_sequence,
         )
     elif kind == "box":
         fig = px.box(
             data, x=x, y=y, color=hue, title=title, points="all",
-            hover_data=hover_cols, color_discrete_sequence=color_discrete_sequence
+            hover_data=hover_cols, color_discrete_sequence=color_discrete_sequence,
         )
     else:
         fig = px.line(
             data, x=x, y=y, title=title,
-            hover_data=hover_cols, color_discrete_sequence=color_discrete_sequence
+            hover_data=hover_cols, color_discrete_sequence=color_discrete_sequence,
         )
 
     fig.update_layout(
@@ -119,15 +118,14 @@ def create_interactive_plot(data, x, y, title, hue=None, kind="line", color_disc
 
 def create_hourly_line_plot(hr: pd.DataFrame, title: str = "Avg Infusions by Hour of Session"):
     """
-    Plot mean infusion events per hour of session, averaged across all sessions
-    per subject.  Each subject gets one smooth line (hour 0 → max hour).
+    Mean infusion events per hour, averaged across all sessions per subject.
 
-    WHY this exists instead of passing sub_h raw to create_interactive_plot:
-    sub_h has one row per (subject, session, hour).  Plotting that directly
-    with x="hour" draws one continuous line that connects hour values across
-    sessions in row order, producing sawtooth cycles as the hour axis resets
-    for each new session.  Aggregating first collapses to one row per
-    (subject, hour) so each subject's line is monotonically left-to-right.
+    WHY a dedicated function instead of passing sub_h raw to
+    create_interactive_plot:  sub_h has one row per (subject, session, hour).
+    Plotting x="hour" on that directly draws one line that connects all hours
+    in row order across sessions, zigzagging back and forth — the 'cycling'
+    appearance.  Aggregating to one row per (subject, hour) first produces a
+    clean left-to-right profile curve for each animal.
     """
     if hr.empty or "infusion_events" not in hr.columns:
         return go.Figure().update_layout(title=f"{title} — No Data")
@@ -141,17 +139,12 @@ def create_hourly_line_plot(hr: pd.DataFrame, title: str = "Avg Infusions by Hou
     )
 
     fig = px.line(
-        agg,
-        x="hour",
-        y="avg_infusion_events",
-        color="canonical_subject",
-        title=title,
-        markers=True,
+        agg, x="hour", y="avg_infusion_events",
+        color="canonical_subject", title=title, markers=True,
         color_discrete_sequence=LYNCH_COLORS,
     )
     fig.update_layout(
-        template="plotly_white",
-        height=600,
+        template="plotly_white", height=600,
         xaxis_title="Hour of Session",
         yaxis_title="Avg Infusion Events",
         legend_title_text="Subject",
@@ -174,7 +167,7 @@ def create_efficiency_trend(daily: pd.DataFrame):
     return create_interactive_plot(
         df, date_col, "efficiency",
         "Efficiency Trend (Rewards/Effort)",
-        hue="canonical_subject", kind="line"
+        hue="canonical_subject", kind="line",
     )
 
 
@@ -185,11 +178,9 @@ def create_hourly_heatmap(hr: pd.DataFrame):
     pivot = hr.groupby(["canonical_subject", "hour"])["infusion_events"].sum().unstack(fill_value=0)
 
     fig = px.imshow(
-        pivot,
-        title="Hourly Infusion Heatmap",
-        aspect="auto",
-        color_continuous_scale="Blues",
-        labels=dict(x="Hour of Session", y="Subject", color="Infusions")
+        pivot, title="Hourly Infusion Heatmap",
+        aspect="auto", color_continuous_scale="Blues",
+        labels=dict(x="Hour of Session", y="Subject", color="Infusions"),
     )
     fig.update_layout(template="plotly_white", height=500)
     return fig
@@ -207,24 +198,24 @@ def create_cumulative_plot(sess: pd.DataFrame):
     sess["cumulative_infusions"] = sess.groupby("canonical_subject")["infusions"].cumsum()
 
     fig = px.line(
-        sess,
-        x=date_col,
-        y="cumulative_infusions",
+        sess, x=date_col, y="cumulative_infusions",
         color="canonical_subject",
-        title="Cumulative Infusions Over Time",
-        markers=True,
+        title="Cumulative Infusions Over Time", markers=True,
         hover_data=["infusions", "active_presses", "program_name", "gender"],
-        color_discrete_sequence=LYNCH_COLORS
+        color_discrete_sequence=LYNCH_COLORS,
     )
 
-    x_label = "Session Day" if date_col == "session_day" else "Date"
+    is_int = _is_integer_day_column(sess, date_col)
+    x_label = "Session Day" if is_int else "Date"
+    xaxis_cfg = dict(tickangle=45, rangeslider_visible=True)
+    if not is_int:
+        xaxis_cfg["tickformat"] = "%Y-%m-%d"
+
     fig.update_layout(
-        xaxis_title=x_label,
-        yaxis_title="Cumulative Infusions",
-        template="plotly_white",
-        hovermode="x unified",
-        xaxis=dict(tickangle=45, rangeslider_visible=True),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        xaxis_title=x_label, yaxis_title="Cumulative Infusions",
+        template="plotly_white", hovermode="x unified",
+        xaxis=xaxis_cfg,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
     return fig
 
@@ -240,17 +231,14 @@ def create_discrimination_plot(sess: pd.DataFrame):
     df_melt = sess.melt(
         id_vars=[date_col, "canonical_subject"],
         value_vars=["active_presses", "inactive_presses"],
-        var_name="Lever",
-        value_name="Presses"
+        var_name="Lever", value_name="Presses",
     )
     df_melt["Lever"] = df_melt["Lever"].str.replace("_presses", "").str.title()
 
     fig = px.bar(
-        df_melt,
-        x=date_col, y="Presses", color="Lever",
-        barmode="group",
-        facet_col="canonical_subject", facet_col_wrap=3,
-        title="Lever Discrimination per Session"
+        df_melt, x=date_col, y="Presses", color="Lever",
+        barmode="group", facet_col="canonical_subject", facet_col_wrap=3,
+        title="Lever Discrimination per Session",
     )
     fig.update_layout(template="plotly_white", height=600)
     return fig
@@ -267,7 +255,7 @@ def create_pr_breakpoint_plot(sess: pd.DataFrame):
     return create_interactive_plot(
         sess, date_col, "breakpoints",
         "PR Breakpoint Evolution",
-        hue="canonical_subject", kind="line"
+        hue="canonical_subject", kind="line",
     )
 
 
@@ -285,28 +273,24 @@ def create_response_rate_plot(sess: pd.DataFrame):
     return create_interactive_plot(
         rate, date_col, "response_rate",
         "Response Rate (Active Presses per Hour)",
-        hue="canonical_subject", kind="line"
+        hue="canonical_subject", kind="line",
     )
 
 
 def create_within_session_plot(active_timestamps, duration=None):
-    """Generates a cumulative step-plot for active responses within one session."""
+    """Cumulative step-plot of active responses across one session."""
     import numpy as np
 
     if not isinstance(active_timestamps, list) or len(active_timestamps) == 0:
-        fig = go.Figure()
-        fig.update_layout(title="No active response timepoints available for this session.")
-        return fig
+        return go.Figure().update_layout(title="No active response timepoints available.")
 
     y_vals = np.arange(1, len(active_timestamps) + 1)
 
     fig = go.Figure(go.Scatter(
-        x=active_timestamps,
-        y=y_vals,
-        mode="lines+markers",
-        line_shape="hv",
+        x=active_timestamps, y=y_vals,
+        mode="lines+markers", line_shape="hv",
         name="Active Responses",
-        line=dict(color="rgb(31, 119, 180)", width=2)
+        line=dict(color="rgb(31, 119, 180)", width=2),
     ))
 
     max_time = max(active_timestamps) * 1.05
@@ -318,8 +302,7 @@ def create_within_session_plot(active_timestamps, duration=None):
         xaxis_title="Time in Session (seconds)",
         yaxis_title="Cumulative Active Responses",
         xaxis=dict(range=[0, max_time]),
-        template="plotly_white",
-        hovermode="x unified"
+        template="plotly_white", hovermode="x unified",
     )
     return fig
 
@@ -327,10 +310,10 @@ def create_within_session_plot(active_timestamps, duration=None):
 def create_mean_sem_trajectory(daily: pd.DataFrame):
     """
     Cohort average trajectory (Mean ± SEM) with shaded error band.
-    Works correctly for both integer session_day and calendar date x-axes.
+    Handles both integer session_day and calendar-date x-axes correctly.
     """
     if daily.empty or "total_infusions" not in daily.columns:
-        return go.Figure().update_layout(title="No data available for Cohort Average Trajectory")
+        return go.Figure().update_layout(title="No data — Cohort Average Trajectory")
 
     date_col = get_date_column(daily)
     if date_col is None:
@@ -344,49 +327,46 @@ def create_mean_sem_trajectory(daily: pd.DataFrame):
     )
     mean_df["sem"] = mean_df["sem"].fillna(0)
 
-    # Only attempt datetime conversion if the column is NOT integer session days
+    # Only attempt datetime conversion when the column is not integer session days.
+    # Forcing pd.to_datetime() on integers produces NaT → blank chart.
     use_dates = not _is_integer_day_column(daily, date_col)
     if use_dates:
         mean_df["x_val"] = pd.to_datetime(mean_df["x_val"], errors="coerce")
         mean_df = mean_df.dropna(subset=["x_val"])
         hover_tmpl = "Date: %{x|%Y-%m-%d}<br>Mean Infusions: %{y:.2f}<extra></extra>"
-        x_label = "Date"
+        x_label  = "Date"
         tick_fmt = "%Y-%m-%d"
     else:
         mean_df["x_val"] = mean_df["x_val"].astype(int)
         hover_tmpl = "Session Day: %{x}<br>Mean Infusions: %{y:.2f}<extra></extra>"
-        x_label = "Session Day"
+        x_label  = "Session Day"
         tick_fmt = None
 
     if mean_df.empty:
-        return go.Figure().update_layout(title="Cohort Average Trajectory — No Valid Dates")
+        return go.Figure().update_layout(title="Cohort Average Trajectory — No Valid Data")
 
-    x = mean_df["x_val"]
-    y = mean_df["mean"]
-    y_upper = y + mean_df["sem"]
-    y_lower = y - mean_df["sem"]
+    x      = mean_df["x_val"]
+    y      = mean_df["mean"]
+    y_up   = y + mean_df["sem"]
+    y_down = y - mean_df["sem"]
 
     fig = go.Figure([
         go.Scatter(
-            name="Cohort Mean",
-            x=x, y=y,
+            name="Cohort Mean", x=x, y=y,
             mode="lines+markers",
             line=dict(color="rgb(31, 119, 180)"),
             marker=dict(size=8),
             hovertemplate=hover_tmpl,
         ),
         go.Scatter(
-            name="Upper Bound",
-            x=x, y=y_upper,
+            name="Upper Bound", x=x, y=y_up,
             mode="lines", line=dict(width=0),
             showlegend=False, hoverinfo="skip",
         ),
         go.Scatter(
-            name="Lower Bound",
-            x=x, y=y_lower,
+            name="Lower Bound", x=x, y=y_down,
             mode="lines", line=dict(width=0),
-            fillcolor="rgba(31, 119, 180, 0.2)",
-            fill="tonexty",
+            fillcolor="rgba(31, 119, 180, 0.2)", fill="tonexty",
             showlegend=False, hoverinfo="skip",
         ),
     ])
@@ -397,13 +377,9 @@ def create_mean_sem_trajectory(daily: pd.DataFrame):
 
     fig.update_layout(
         title="Cohort Average Trajectory (Mean ± SEM)",
-        xaxis_title=x_label,
-        yaxis_title="Infusions (Mean ± SEM)",
-        template="plotly_white",
-        hovermode="x unified",
-        xaxis=xaxis_cfg,
-        showlegend=True,
+        xaxis_title=x_label, yaxis_title="Infusions (Mean ± SEM)",
+        template="plotly_white", hovermode="x unified",
+        xaxis=xaxis_cfg, showlegend=True,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
-
     return fig
