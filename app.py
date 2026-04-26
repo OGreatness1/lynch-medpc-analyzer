@@ -18,7 +18,7 @@ from plotter import (
     create_pr_breakpoint_plot, create_efficiency_trend,
     create_response_rate_plot, create_hourly_heatmap,
     create_mean_sem_trajectory,
-    create_within_session_plot  # <--- ADDED
+    create_within_session_plot
 )
 from utils import canonicalize_id
 
@@ -287,7 +287,7 @@ if 'df_sess' in st.session_state and st.session_state.df_sess is not None and no
 
                 if not daily.empty:
                     buf = create_plot(
-                        daily, "first_session_time", "total_infusions",
+                        daily, "session_day", "total_infusions",
                         f"Daily Infusions - {prog}", "canonical_subject", kind="line"
                     )
                     if buf:
@@ -359,7 +359,7 @@ if 'df_sess' in st.session_state and st.session_state.df_sess is not None and no
                         if not daily.empty:
                             st.plotly_chart(
                                 create_interactive_plot(
-                                    daily, "first_session_time", "total_infusions",
+                                    daily, "session_day", "total_infusions",
                                     f"Daily Infusions — {p}", "canonical_subject", kind="line"
                                 ),
                                 use_container_width=True,
@@ -432,7 +432,7 @@ if 'df_sess' in st.session_state and st.session_state.df_sess is not None and no
                                     st.plotly_chart(
                                         create_interactive_plot(
                                             prog_daily,
-                                            "first_session_time",
+                                            "session_day",
                                             "total_infusions",
                                             f"Daily Infusions — {p} ({sel})",
                                             hue=None,
@@ -490,7 +490,7 @@ if 'df_sess' in st.session_state and st.session_state.df_sess is not None and no
                 
                                 if "active_timestamps" in prog_sess.columns and "session_day" in prog_sess.columns:
                                     # Create dropdown options combining Session Day and Date
-                                    session_options = prog_sess['session_day'].astype(str) + " (" + prog_sess['start_date'].astype(str) + ")"
+                                    session_options = prog_sess['session_day'].astype(str) + " (" + prog_sess['start_date'].dt.date.astype(str) + ")"
                                     
                                     selected_session = st.selectbox(
                                         "Select a session to view correct response timepoints:", 
