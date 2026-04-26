@@ -317,7 +317,7 @@ if (
                 plot_list = []
                 if not daily.empty:
                     buf = create_plot(
-                        daily, "date", "total_infusions",
+                        daily, "first_session_time", "total_infusions",
                         f"Daily Infusions - {prog}", "canonical_subject", kind="line",
                     )
                     if buf:
@@ -390,7 +390,7 @@ if (
                         if not daily.empty:
                             st.plotly_chart(
                                 create_interactive_plot(
-                                    daily, "date", "total_infusions",
+                                    daily, "first_session_time", "total_infusions",
                                     f"Daily Infusions — {p}", "canonical_subject", kind="line",
                                 ),
                                 use_container_width=True,
@@ -462,7 +462,7 @@ if (
                             if not prog_daily.empty:
                                 st.plotly_chart(
                                     create_interactive_plot(
-                                        prog_daily, "date", "total_infusions",
+                                        prog_daily, "first_session_time", "total_infusions",
                                         f"Daily Infusions — {p} ({sel})",
                                         hue=None, kind="line",
                                     ),
