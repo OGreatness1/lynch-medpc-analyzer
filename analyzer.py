@@ -81,7 +81,6 @@ def robust_parse_date(date_str: str) -> pd.Timestamp:
             continue
     return pd.NaT
 
-# ─── UPDATED EXTRACTION FUNCTION ───
 def get_val(session: ParsedSession, var_name: Any, default: Any = 0.0) -> float:
     """Safely retrieve scalar value or specific array index as a float."""
     if not var_name:
@@ -218,7 +217,6 @@ def process_sessions(
             "Room": sess.meta.get("Room", "") or sess.meta.get("Experiment", ""),
         }
 
-        # ─── UPDATED MOUSE ADVANCED LOGIC ───
         if mapping.get("special_processing") == "MOUSE_ADVANCED":
             b_array = sess.arrays.get("B", [])
             
@@ -227,7 +225,6 @@ def process_sessions(
             row["post_session_active"]   = b_array[8] if len(b_array) > 8 else 0
             row["post_session_inactive"] = b_array[9] if len(b_array) > 9 else 0
 
-            # Pull array lists DIRECTLY to prevent scalar conflict
             row["active_timestamps"]     = sess.arrays.get(mapping.get("active_timestamps", "L"), [])
             row["inactive_timestamps"]   = sess.arrays.get(mapping.get("inactive_timestamps", "R"), [])
             row["pr_schedule"]           = sess.arrays.get(mapping.get("pr_schedule", "P"), [])
@@ -248,7 +245,6 @@ def process_sessions(
 
         all_rows.append(row)
 
-        # ─── UPDATED HOURLY BREAKDOWN ───
         inf_ts_key = mapping.get("infusion_timestamps", "I")
         act_ts_key = mapping.get("active_timestamps", "R")
 
@@ -276,7 +272,6 @@ def process_sessions(
 
     if not df_sessions.empty:
         df_sessions = df_sessions.sort_values(["canonical_subject", "start_date"])
-        # ADDED: Generate relative Session Day (1, 2, 3...)
         df_sessions['session_day'] = df_sessions.groupby(['canonical_subject', 'program_name']).cumcount() + 1
         
     if not df_hourly.empty:
@@ -327,11 +322,9 @@ def create_daily_summary(df_sessions: pd.DataFrame) -> pd.DataFrame:
         df['start_date'] = pd.to_datetime(df['start_date'], errors='coerce')
         df = df.dropna(subset=['start_date'])
         
-    # ─── NEW: Ensure session_day exists, fallback to 1 ───
     if "session_day" not in df.columns:
         df["session_day"] = 1
 
-    # ─── CHANGED: Group by relative session_day instead of calendar date ───
     group_keys = ["canonical_subject", "gender", "session_day"]
 
     possible_agg = {
@@ -362,8 +355,7 @@ def create_daily_summary(df_sessions: pd.DataFrame) -> pd.DataFrame:
 
     agg_dict = {col: func for col, func in possible_agg.items() if col in df.columns}
     daily = df.groupby(group_keys).agg(agg_dict).reset_index()
-    
-    # ... (Keep your existing rename_map and return logic exactly as it is below this point) ...
+
     rename_map = {
         "infusions": "total_infusions",
         "active_presses": "total_active_presses",
