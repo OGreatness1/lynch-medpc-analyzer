@@ -13,7 +13,7 @@ METADATA_KEYS = [
 ]
 
 # ────────────────────────────────────────────────
-# Variable letter mappings per program type
+# RAT PROGRAM MAPPINGS
 # ────────────────────────────────────────────────
 map_rat_fr = {
     "infusions": "I",
@@ -112,6 +112,20 @@ map_withdrawal = {
     "T_value": "T",
 }
 
+map_continuous_fentanyl = {
+    "active_presses": "B(0)",  
+    "inactive_presses": "B(1)", 
+    "weight": "D"              
+}
+
+map_locomotor_baseline = {
+    "active_presses": "B(0)",      # LLEVER presses
+    "inactive_presses": "B(1)",    # RLEVER presses
+    "active_timestamps": "L",      # LLEVER Response Array
+    "inactive_timestamps": "R",    # RLEVER Response Array
+    "weight": "A(0)"               # Weight (grams)
+}
+
 # ────────────────────────────────────────────────
 # MOUSE PROGRAM MAPPINGS — FINAL VERSION
 # ────────────────────────────────────────────────
@@ -191,19 +205,17 @@ DEFAULT_MSN_PATTERNS: Dict[str, List[str]] = {
         "new intermittent access",
         "g136a new intermittent",
         "g136b new intermittent",
-        # Keep "intermittent" last — it's broad, so lower priority
         "intermittent",
         "ld intermittent",
         "intermittentldesd",
         "new intermittent",
     ],
 
-    # === FENTANYL FR40 LD FOOD RESTRICT — make sure it's very specific ===
+    # === FENTANYL FR40 LD FOOD RESTRICT ===
     "RAT - FENTANYL FR40 LD FOOD RESTRICT": [
         "fentanyl1secfr40ldfoodrestrictesd",
         "g136afentanyl1secfr40ldfoodrestrictesd",
         "g136bfentanyl1secfr40ldfoodrestrictesd",
-        # Add any common variants you see
         "fentanyl 1 sec fr40 ld food restrict esd",
         "fentanyl1secfr40ld foodrestrictesd",
     ],
@@ -231,7 +243,7 @@ DEFAULT_MSN_PATTERNS: Dict[str, List[str]] = {
         "new frfood train",
     ],
 
-    # === WITHDRAWAL — move higher if it's being stolen by intermittent ===
+    # === WITHDRAWAL (Merged) ===
     "RAT - WITHDRAWAL": [
         "withdrawalldesd",
         "g136awithdrawalldesd",
@@ -242,7 +254,9 @@ DEFAULT_MSN_PATTERNS: Dict[str, List[str]] = {
         "g136bwithdrawal",
         "withdrawalld",
     ],
-    "RAT - CONTINUOUS FENTANYL": ["continuousfentanyl"],
+    
+    "RAT - CONTINUOUS FENTANYL": ["continuousfentanyl", "continuous fentanyl"],
+    "RAT - LOCOMOTOR BASELINE": ["locomotorbaseline", "locomotor baseline"],
     "RAT - FR20": ["fr20", "g136afr20", "fr20esd", "fr20pdt"],
     "RAT - FR40": ["fr40", "g136afr40"],
     "RAT - PR COCAINE": ["prcocaine", "prcocaineesd", "g136aprcocaine"],
@@ -288,17 +302,18 @@ DEFAULT_MSN_PATTERNS: Dict[str, List[str]] = {
     ],
     "RAT - DISCRETE TRIAL": ["dt4final", "g136adt4final"],
     "RAT - FLUSH": ["flush", "g136aflush", "withdrawalmpc"],
-    "RAT - WITHDRAWAL": ["withdrawal", "g136awithdrawal", "g136bwithdrawal", "withdrawalld", "withdrawalldesd"],
+    
+    # === MOUSE PROGRAMS (Merged) ===
+    "MOUSE - FR1": ["mousefr1", "mouse fr1", "fr1mouse"],
+    "MOUSE - PR": ["mousepr", "mouse pr", "pr mouse"],
     "MOUSE - EXTENDED ACCESS": [
         "mouseextendedaccess",
+        "mouseextended",
+        "mouse extended access",
         "mouseextendedaccessv2",
         "mouseintera",
         "mouseintermittentaccess",
     ],
-    # === MOUSE PROGRAMS ===
-    "MOUSE - FR1": ["mousefr1", "mouse fr1", "fr1mouse"],
-    "MOUSE - PR": ["mousepr", "mouse pr", "pr mouse"],
-    "MOUSE - EXTENDED ACCESS": ["mouseextendedaccess", "mouseextended", "mouse extended access"],
 }
 
 # ────────────────────────────────────────────────
@@ -310,7 +325,8 @@ DEFAULT_VARIABLE_MAPPINGS: Dict[str, Dict[str, Any]] = {
     "RAT - FENTANYL FR40 LD": map_rat_fent,
     "RAT - FENTANYL FR40 LD FOOD RESTRICT": map_rat_fent,
     "RAT - FENTANYL FR40": map_rat_fent,
-    "RAT - CONTINUOUS FENTANYL": map_rat_fent,
+    "RAT - CONTINUOUS FENTANYL": map_continuous_fentanyl, # Fixed Link
+    "RAT - LOCOMOTOR BASELINE": map_locomotor_baseline,   # Added Link
     "RAT - FR20": map_rat_fr,
     "RAT - FR40": map_rat_fr,
     "RAT - PR COCAINE": map_rat_pr,
@@ -339,5 +355,4 @@ def normalize_msn(msn: str) -> str:
         .replace(".", "")
     )
 
-
-print("✅ config.py v5.9 loaded — W & T values now mapped, Intermittent Access still prioritized!")
+print("✅ config.py v5.9 loaded — W & T values mapped, Locomotor & Fentanyl Linked!")
