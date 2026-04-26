@@ -10,6 +10,12 @@ import hashlib
 
 warnings.filterwarnings("ignore")
 
+# ─────────────────────────────────────────────────────────────────────────────
+# CRITICAL: set_page_config MUST be the very first Streamlit call in the
+# script — before ANY other st.* calls, including those in the auth block.
+# ─────────────────────────────────────────────────────────────────────────────
+st.set_page_config(page_title="Lynch Lab MedPC Analyzer", page_icon="🧬", layout="wide")
+
 from parser import MedPCParser
 from analyzer import process_sessions, generate_pattern_flags, create_daily_summary, report_missing_and_box_room
 from plotter import (
@@ -18,11 +24,13 @@ from plotter import (
     create_pr_breakpoint_plot, create_efficiency_trend,
     create_response_rate_plot, create_hourly_heatmap,
     create_mean_sem_trajectory,
-    create_within_session_plot
+    create_within_session_plot,
 )
 from utils import canonicalize_id
 
-# ─── Simple password protection using secrets ───
+# ─────────────────────────────────────────────────────────────────────────────
+# Simple password protection using Streamlit secrets
+# ─────────────────────────────────────────────────────────────────────────────
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
@@ -45,24 +53,24 @@ if not st.session_state.authenticated:
         st.markdown("Forgot password? Contact the lab manager.")
         st.stop()
 
-# ─── Authenticated users only reach here ───
-st.set_page_config(page_title="Lynch Lab MedPC Analyzer", page_icon="🧬", layout="wide")
-
-if 'df_sess' not in st.session_state:
+# ─────────────────────────────────────────────────────────────────────────────
+# Authenticated users only reach this point
+# ─────────────────────────────────────────────────────────────────────────────
+if "df_sess" not in st.session_state:
     st.session_state.update({
-        'df_sess': None,
-        'df_hr': None,
-        'found_ids': None,
-        'skipped_report': None,
-        'analysis_run': False
+        "df_sess":        None,
+        "df_hr":          None,
+        "found_ids":      None,
+        "skipped_report": None,
+        "analysis_run":   False,
     })
 
 st.title("🧬 Lynch Lab MedPC Analyzer")
 st.markdown("**Robust parsing • Custom flags & thresholds • Cohort filtering • Per-program exports**")
 
-# ────────────────────────────────────────────────
-# Sidebar – Uploads & Controls
-# ────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Sidebar — Uploads & Controls
+# ─────────────────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("Upload Config (Optional)")
     settings_file = st.file_uploader("settings.json (custom MSN & mappings)", type=["json"])
@@ -71,32 +79,34 @@ with st.sidebar:
     id_file = st.file_uploader("ID list (.txt)", type=["txt"])
 
     st.header("Data Files")
-    data_files = st.file_uploader("MedPC .txt / .zip files", accept_multiple_files=True)
+    data_files = st.file_uploader(
+        "MedPC .txt / .zip files",
+        accept_multiple_files=True,
+        type=["txt", "zip"],
+    )
 
     st.header("Cohort Hard-Filter")
 
-    # Quick and convenient toggle for mouse users
     include_mice = st.checkbox("Include Mice (G126 / G126A / G126B)", value=True)
 
-    # Full cohort options
     cohort_options = [
         "G136A", "G136B",
         "G140A", "G140B",
-        "G126", "G126A", "G126B",   # Mouse cohorts
-        "All Others"
+        "G126", "G126A", "G126B",
+        "All Others",
     ]
 
-    # Smart default selection
-    default_cohorts = ["G126", "G126A", "G126B", "G136A", "G136B", "G140A", "G140B", "All Others"] \
+    default_cohorts = (
+        ["G126", "G126A", "G126B", "G136A", "G136B", "G140A", "G140B", "All Others"]
         if include_mice else cohort_options
+    )
 
     selected_cohorts = st.multiselect(
         "Only include these cohorts",
         cohort_options,
-        default=default_cohorts
+        default=default_cohorts,
     )
 
-    # If user checked "Include Mice", force G126* cohorts to be included
     if include_mice:
         mouse_cohorts = {"G126", "G126A", "G126B"}
         selected_cohorts = list(set(selected_cohorts) | mouse_cohorts)
@@ -104,61 +114,47 @@ with st.sidebar:
     st.header("Custom Flag Thresholds")
     min_active_presses = st.slider("Min active presses (low activity)", 0, 50, 5)
     max_inactive_ratio = st.slider("Max inactive/active ratio", 0.0, 2.0, 0.4, 0.05)
-    min_session_min = st.slider("Min session length (minutes)", 5, 120, 20)
-    escalation_pct = st.slider("Escalation detection threshold (%)", 10, 100, 30)
+    min_session_min    = st.slider("Min session length (minutes)", 5, 120, 20)
+    escalation_pct     = st.slider("Escalation detection threshold (%)", 10, 100, 30)
 
     st.header("Intake Estimate Settings")
     drug_type = st.selectbox(
         "Drug type for intake estimate",
         ["None", "Cocaine", "Fentanyl", "Nicotine"],
-        help="Select the drug to use the correct infusion duration lookup"
+        help="Select the drug to use the correct infusion duration lookup",
     )
 
     avg_weight_g = st.number_input(
         "Average subject weight (g)",
-        min_value=100,
-        max_value=600,
-        value=300,
-        step=10,
-        help="Used as fallback for infusion duration lookup"
+        min_value=100, max_value=600, value=300, step=10,
+        help="Used as fallback for infusion duration lookup",
     )
 
-    # ─── Conditional concentration input ───
     conc_mgml = 1.0  # default
     if drug_type == "Cocaine":
         conc_mgml = st.number_input(
             "Cocaine concentration (mg/ml)",
-            min_value=0.1,
-            max_value=10.0,
-            value=1.0,
-            step=0.1,
-            help="Concentration in syringe — used for mg/kg intake"
+            min_value=0.1, max_value=10.0, value=1.0, step=0.1,
+            help="Concentration in syringe — used for mg/kg intake",
         )
     elif drug_type == "Fentanyl":
         conc_mgml = st.number_input(
             "Fentanyl concentration (mg/ml)",
-            min_value=0.001,
-            max_value=0.1,
-            value=0.01,
-            step=0.001,
-            format="%.4f",
-            help="Concentration in syringe — used for mg/kg intake"
+            min_value=0.001, max_value=0.1, value=0.01, step=0.001, format="%.4f",
+            help="Concentration in syringe — used for mg/kg intake",
         )
     elif drug_type == "Nicotine":
         conc_mgml = st.number_input(
             "Nicotine concentration (mg/ml)",
-            min_value=0.01,
-            max_value=1.0,
-            value=0.2,
-            step=0.01,
-            help="Concentration in syringe — used for mg/kg intake"
+            min_value=0.01, max_value=1.0, value=0.2, step=0.01,
+            help="Concentration in syringe — used for mg/kg intake",
         )
 
     show_debug = st.checkbox("Show skipped sessions & raw debug", False)
 
-# ────────────────────────────────────────────────
-# Run Analysis Button
-# ────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Run Analysis
+# ─────────────────────────────────────────────────────────────────────────────
 if st.button("🚀 Run Analysis", type="primary"):
     if not data_files:
         st.error("Upload at least one data file.")
@@ -175,23 +171,44 @@ if st.button("🚀 Run Analysis", type="primary"):
 
         allowed_raw = set()
         if id_file:
-            allowed_raw = {line.decode("utf-8", errors="ignore").strip() for line in id_file if line.strip()}
+            allowed_raw = {
+                line.decode("utf-8", errors="ignore").strip()
+                for line in id_file
+                if line.strip()
+            }
         allowed_canon = {canonicalize_id(x) for x in allowed_raw if x}
 
-        parser = MedPCParser()
+        parser       = MedPCParser()
         all_sessions = []
 
         prog_bar = st.progress(0)
-        status = st.empty()
+        status   = st.empty()
 
         for i, f in enumerate(data_files):
-            status.text(f"Parsing {f.name} ({i+1}/{len(data_files)})")
+            status.text(f"Parsing {f.name} ({i + 1}/{len(data_files)})")
             try:
-                content = f.getvalue().decode("utf-8", errors="replace")
-                all_sessions.extend(parser.parse_file(content, f.name))
+                raw_bytes = f.getvalue()
+
+                # ── Handle .zip files ──────────────────────────────────────
+                if f.name.lower().endswith(".zip"):
+                    with zipfile.ZipFile(io.BytesIO(raw_bytes)) as zf:
+                        for inner_name in zf.namelist():
+                            if inner_name.lower().endswith(".txt"):
+                                try:
+                                    inner_content = zf.read(inner_name).decode("utf-8", errors="replace")
+                                    all_sessions.extend(
+                                        parser.parse_file(inner_content, f"{f.name}/{inner_name}")
+                                    )
+                                except Exception as inner_e:
+                                    st.warning(f"Error reading {inner_name} inside {f.name}: {inner_e}")
+                else:
+                    content = raw_bytes.decode("utf-8", errors="replace")
+                    all_sessions.extend(parser.parse_file(content, f.name))
+
             except Exception as e:
                 st.warning(f"Parse error in {f.name}: {e}")
-            prog_bar.progress((i+1)/len(data_files))
+
+            prog_bar.progress((i + 1) / len(data_files))
 
         status.text("Running behavioral analysis...")
 
@@ -202,75 +219,92 @@ if st.button("🚀 Run Analysis", type="primary"):
             custom_mappings=custom_mappings,
             drug_type=drug_type,
             avg_weight_g=avg_weight_g,
-            conc_mgml=conc_mgml
+            conc_mgml=conc_mgml,
         )
 
-        # Cohort hard filter
-        if "All Others" not in selected_cohorts:
-            cohort_pattern = '|'.join(selected_cohorts)
-            mask = df_sess["canonical_subject"].str.contains(cohort_pattern, case=False, na=False)
-            
+        # ── Cohort hard filter ─────────────────────────────────────────────
+        # Use word-boundary anchoring to prevent partial matches
+        # (e.g. G136A should not match G1364A)
+        if "All Others" not in selected_cohorts and selected_cohorts:
+            cohort_pattern = "|".join(
+                r"(?<![A-Za-z0-9])" + re.escape(c) + r"(?![A-Za-z0-9])"
+                for c in selected_cohorts
+            )
+            mask    = df_sess["canonical_subject"].str.contains(cohort_pattern, case=False, na=False, regex=True)
             df_sess = df_sess[mask].copy()
-            
             if not df_hr.empty:
                 df_hr = df_hr[df_hr["canonical_subject"].isin(df_sess["canonical_subject"])].copy()
 
-        # Apply flags with custom thresholds
+        # ── Apply quality flags ────────────────────────────────────────────
         df_sess = generate_pattern_flags(
             df_sess,
             min_active=min_active_presses,
             max_inactive_ratio=max_inactive_ratio,
             min_duration_min=min_session_min,
-            escalation_threshold=escalation_pct
+            escalation_threshold=escalation_pct,
         )
 
         st.session_state.update({
-            'df_sess': df_sess,
-            'df_hr': df_hr,
-            'found_ids': found_ids,
-            'skipped_report': parser.get_skipped_report(),
-            'analysis_run': True
+            "df_sess":        df_sess,
+            "df_hr":          df_hr,
+            "found_ids":      found_ids,
+            "skipped_report": parser.get_skipped_report(),
+            "analysis_run":   True,
         })
+
+        # balloons fires once here, before rerun — not on every subsequent render
+        st.balloons()
         st.rerun()
-        
-# ────────────────────────────────────────────────
-# Results / Dashboard (when analysis has run)
-# ────────────────────────────────────────────────
-if 'df_sess' in st.session_state and st.session_state.df_sess is not None and not st.session_state.df_sess.empty:
-    
-    df_sess = st.session_state.df_sess
-    df_hr   = st.session_state.df_hr
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Results Dashboard (shown after a successful analysis)
+# ─────────────────────────────────────────────────────────────────────────────
+if (
+    "df_sess" in st.session_state
+    and st.session_state.df_sess is not None
+    and not st.session_state.df_sess.empty
+):
+    df_sess   = st.session_state.df_sess
+    df_hr     = st.session_state.df_hr
     found_ids = st.session_state.found_ids
-    skipped  = st.session_state.skipped_report
+    skipped   = st.session_state.skipped_report
 
     if df_sess.empty:
         st.warning("No data matched your filters / ID list.")
     else:
-        # ───── Missing + Box/Room Report ─────
+        # ── Missing + Box/Room Report ──────────────────────────────────────
         st.header("Subject Coverage & Box/Room")
         expected = set()
         report_missing_and_box_room(expected, found_ids, df_sess)
 
-        # ───── Metrics ─────
+        # ── Top-level metrics ──────────────────────────────────────────────
         col1, col2, col3 = st.columns(3)
         col1.metric("Unique Subjects", len(found_ids))
-        col2.metric("Total Sessions", len(df_sess))
-        col3.metric("Skipped Files", len(skipped), delta_color="inverse")
+        col2.metric("Total Sessions",  len(df_sess))
+        col3.metric("Skipped Files",   len(skipped), delta_color="inverse")
 
-        # ───── ZIP Export ─────
+        if show_debug and skipped:
+            st.subheader("Skipped Sessions Log")
+            st.dataframe(pd.DataFrame(skipped))
+
+        # ── ZIP Export ────────────────────────────────────────────────────
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+
+            # Skipped log — written entirely in memory (no disk writes)
             if skipped:
-                pd.DataFrame(skipped).to_excel("00_Skipped_Log.xlsx", index=False)
-                zf.write("00_Skipped_Log.xlsx")
+                skip_buf = io.BytesIO()
+                pd.DataFrame(skipped).to_excel(skip_buf, index=False, engine="openpyxl")
+                zf.writestr("00_Skipped_Sessions_Log.xlsx", skip_buf.getvalue())
 
             for prog in df_sess["program_name"].unique():
-                safe = re.sub(r"[^A-Za-z0-9_]", "_", prog)
+                safe  = re.sub(r"[^A-Za-z0-9_]", "_", prog)
                 sub_s = df_sess[df_sess["program_name"] == prog]
                 sub_h = df_hr[df_hr["program_name"] == prog] if not df_hr.empty else pd.DataFrame()
                 daily = create_daily_summary(sub_s)
 
-                # ───── Excel per program ─────
+                # Excel workbook per program
                 excel_buf = io.BytesIO()
                 with pd.ExcelWriter(excel_buf, engine="openpyxl") as w:
                     sub_s.to_excel(w, sheet_name="Sessions", index=False)
@@ -279,50 +313,38 @@ if 'df_sess' in st.session_state and st.session_state.df_sess is not None and no
                     if not daily.empty:
                         daily.to_excel(w, sheet_name="Daily", index=False)
                     generate_pattern_flags(sub_s).to_excel(w, sheet_name="Flags", index=False)
-
                 zf.writestr(f"{safe}_Full_Analysis.xlsx", excel_buf.getvalue())
 
-                # ───── Matplotlib plots saved to ZIP ─────
+                # Matplotlib static plots
                 plot_list = []
 
                 if not daily.empty:
-                    buf = create_plot(
-                        daily, "session_day", "total_infusions",
-                        f"Daily Infusions - {prog}", "canonical_subject", kind="line"
-                    )
+                    buf = create_plot(daily, "session_day", "total_infusions",
+                                      f"Daily Infusions - {prog}", "canonical_subject", kind="line")
                     if buf:
                         plot_list.append((buf, "01_Daily_Infusions_Line"))
 
                 if not sub_h.empty:
-                    buf = create_plot(
-                        sub_h, "hour", "infusion_events",
-                        f"Hourly Infusions - {prog}", "canonical_subject"
-                    )
+                    buf = create_plot(sub_h, "hour", "infusion_events",
+                                      f"Hourly Infusions - {prog}", "canonical_subject")
                     if buf:
                         plot_list.append((buf, "02_Hourly_Infusions"))
 
-                    buf = create_plot(
-                        sub_h, "hour", "active_events",
-                        f"Hourly Active Presses - {prog}", "canonical_subject"
-                    )
+                    buf = create_plot(sub_h, "hour", "active_events",
+                                      f"Hourly Active Presses - {prog}", "canonical_subject")
                     if buf:
                         plot_list.append((buf, "03_Hourly_Active"))
 
                 if not sub_s.empty:
-                    buf = create_plot(
-                        sub_s, "active_presses", "infusions",
-                        f"Efficiency (Active vs Infusions) - {prog}",
-                        "gender", kind="scatter", style="duration_sec"
-                    )
+                    buf = create_plot(sub_s, "active_presses", "infusions",
+                                      f"Efficiency (Active vs Infusions) - {prog}",
+                                      "gender", kind="scatter", style="duration_sec")
                     if buf:
                         plot_list.append((buf, "04_Efficiency_Scatter"))
 
                 if not daily.empty and "gender" in daily.columns:
-                    buf = create_plot(
-                        daily, "gender", "total_infusions",
-                        f"Infusions by Gender - {prog}",
-                        "gender", kind="box"
-                    )
+                    buf = create_plot(daily, "gender", "total_infusions",
+                                      f"Infusions by Gender - {prog}", "gender", kind="box")
                     if buf:
                         plot_list.append((buf, "05_Infusions_by_Gender_Box"))
 
@@ -334,24 +356,28 @@ if 'df_sess' in st.session_state and st.session_state.df_sess is not None and no
             "📥 Download ZIP (All Programs + Plots + Logs)",
             zip_buffer.getvalue(),
             f"MedPC_{datetime.now():%Y%m%d_%H%M}.zip",
-            "application/zip"
+            "application/zip",
         )
 
-        st.balloons()
         st.success("Analysis complete!")
 
-        # ───── Live Dashboard Tabs ─────
+        # ── Live Dashboard Tabs ────────────────────────────────────────────
         st.header("Live Dashboard")
-        tab_cohort, tab_advanced, tab_subject = st.tabs(["Cohort View", "Cross-Program", "Single Subject"])
+        tab_cohort, tab_advanced, tab_subject = st.tabs(
+            ["Cohort View", "Cross-Program", "Single Subject"]
+        )
 
         with tab_cohort:
-            programs = sorted(df_sess["program_name"].unique())
+            programs  = sorted(df_sess["program_name"].unique())
             prog_tabs = st.tabs([f"🧪 {p}" for p in programs])
 
             for tab_idx, (tab, p) in enumerate(zip(prog_tabs, programs)):
                 with tab:
                     sub_s = df_sess[df_sess["program_name"] == p].copy()
-                    sub_h = df_hr[df_hr["program_name"] == p].copy() if not df_hr.empty else pd.DataFrame()
+                    sub_h = (
+                        df_hr[df_hr["program_name"] == p].copy()
+                        if not df_hr.empty else pd.DataFrame()
+                    )
                     daily = create_daily_summary(sub_s)
 
                     c1, c2 = st.columns(2)
@@ -363,12 +389,12 @@ if 'df_sess' in st.session_state and st.session_state.df_sess is not None and no
                                     f"Daily Infusions — {p}", "canonical_subject", kind="line"
                                 ),
                                 use_container_width=True,
-                                key=f"daily_infusions_{p}_{tab_idx}"
+                                key=f"daily_infusions_{p}_{tab_idx}",
                             )
                             st.plotly_chart(
                                 create_mean_sem_trajectory(daily),
                                 use_container_width=True,
-                                key=f"mean_sem_daily_{p}_{tab_idx}"
+                                key=f"mean_sem_daily_{p}_{tab_idx}",
                             )
                     with c2:
                         if not sub_h.empty:
@@ -378,36 +404,40 @@ if 'df_sess' in st.session_state and st.session_state.df_sess is not None and no
                                     f"Hourly Infusions — {p}", "canonical_subject", kind="line"
                                 ),
                                 use_container_width=True,
-                                key=f"hourly_infusions_{p}_{tab_idx}"
+                                key=f"hourly_infusions_{p}_{tab_idx}",
                             )
                             st.plotly_chart(
                                 create_hourly_heatmap(sub_h),
                                 use_container_width=True,
-                                key=f"hourly_heatmap_{p}_{tab_idx}"
+                                key=f"hourly_heatmap_{p}_{tab_idx}",
                             )
 
         with tab_advanced:
             st.plotly_chart(
                 create_cumulative_plot(df_sess),
                 use_container_width=True,
-                key="cumulative_all"
+                key="cumulative_all",
             )
             st.plotly_chart(
                 create_discrimination_plot(df_sess),
                 use_container_width=True,
-                key="discrimination_all"
+                key="discrimination_all",
             )
 
         with tab_subject:
             sel = st.selectbox("Select Subject", sorted(found_ids))
             if sel:
                 subject_sess = df_sess[df_sess["canonical_subject"] == sel].copy()
-                subject_hr = df_hr[df_hr["canonical_subject"] == sel].copy() if not df_hr.empty else pd.DataFrame()
+                subject_hr   = (
+                    df_hr[df_hr["canonical_subject"] == sel].copy()
+                    if not df_hr.empty else pd.DataFrame()
+                )
 
                 if subject_sess.empty:
                     st.warning(f"No sessions found for subject {sel}.")
                 else:
-                    st.subheader(f"Overview for {sel} ({subject_sess['gender'].iloc[0] if not subject_sess.empty else 'Unknown'})")
+                    gender_label = subject_sess["gender"].iloc[0] if not subject_sess.empty else "Unknown"
+                    st.subheader(f"Overview for {sel} ({gender_label})")
 
                     programs = sorted(subject_sess["program_name"].unique())
 
@@ -418,35 +448,34 @@ if 'df_sess' in st.session_state and st.session_state.df_sess is not None and no
 
                         for tab_idx, (tab, p) in enumerate(zip(prog_tabs, programs)):
                             with tab:
-                                prog_sess = subject_sess[subject_sess["program_name"] == p].copy()
-                                prog_hr = subject_hr[subject_hr["program_name"] == p].copy() if not subject_hr.empty else pd.DataFrame()
-
+                                prog_sess  = subject_sess[subject_sess["program_name"] == p].copy()
+                                prog_hr    = (
+                                    subject_hr[subject_hr["program_name"] == p].copy()
+                                    if not subject_hr.empty else pd.DataFrame()
+                                )
                                 prog_daily = create_daily_summary(prog_sess)
 
                                 col1, col2, col3 = st.columns(3)
-                                col1.metric("Sessions", len(prog_sess))
+                                col1.metric("Sessions",       len(prog_sess))
                                 col2.metric("Total Infusions", prog_sess["infusions"].sum())
-                                col3.metric("Active Presses", prog_sess["active_presses"].sum())
+                                col3.metric("Active Presses",  prog_sess["active_presses"].sum())
 
                                 if not prog_daily.empty:
                                     st.plotly_chart(
                                         create_interactive_plot(
-                                            prog_daily,
-                                            "session_day",
-                                            "total_infusions",
+                                            prog_daily, "session_day", "total_infusions",
                                             f"Daily Infusions — {p} ({sel})",
-                                            hue=None,
-                                            kind="line"
+                                            hue=None, kind="line"
                                         ),
                                         use_container_width=True,
-                                        key=f"daily_infusions_subject_{sel}_{p}_{tab_idx}"
+                                        key=f"daily_infusions_subject_{sel}_{p}_{tab_idx}",
                                     )
 
                                 if not prog_hr.empty:
                                     st.plotly_chart(
                                         create_hourly_heatmap(prog_hr),
                                         use_container_width=True,
-                                        key=f"hourly_heatmap_subject_{sel}_{p}_{tab_idx}"
+                                        key=f"hourly_heatmap_subject_{sel}_{p}_{tab_idx}",
                                     )
 
                                 st.subheader(f"Additional Plots — {p}")
@@ -455,70 +484,85 @@ if 'df_sess' in st.session_state and st.session_state.df_sess is not None and no
                                     st.plotly_chart(
                                         create_cumulative_plot(prog_sess),
                                         use_container_width=True,
-                                        key=f"cumulative_subject_{sel}_{p}_{tab_idx}"
+                                        key=f"cumulative_subject_{sel}_{p}_{tab_idx}",
                                     )
 
                                 if not prog_sess.empty and "active_presses" in prog_sess.columns:
                                     st.plotly_chart(
                                         create_discrimination_plot(prog_sess),
                                         use_container_width=True,
-                                        key=f"discrimination_subject_{sel}_{p}_{tab_idx}"
+                                        key=f"discrimination_subject_{sel}_{p}_{tab_idx}",
                                     )
-
                                     st.plotly_chart(
                                         create_response_rate_plot(prog_sess),
                                         use_container_width=True,
-                                        key=f"response_rate_subject_{sel}_{p}_{tab_idx}"
+                                        key=f"response_rate_subject_{sel}_{p}_{tab_idx}",
                                     )
 
-                                if not prog_sess.empty and "breakpoint" in prog_sess.columns and prog_sess["breakpoint"].sum() > 0:
+                                if (
+                                    not prog_sess.empty
+                                    and "breakpoints" in prog_sess.columns
+                                    and prog_sess["breakpoints"].sum() > 0
+                                ):
                                     st.plotly_chart(
                                         create_pr_breakpoint_plot(prog_sess),
                                         use_container_width=True,
-                                        key=f"pr_breakpoint_subject_{sel}_{p}_{tab_idx}"
+                                        key=f"pr_breakpoint_subject_{sel}_{p}_{tab_idx}",
                                     )
 
                                 if not prog_daily.empty and "total_active_presses" in prog_daily.columns:
                                     st.plotly_chart(
                                         create_efficiency_trend(prog_daily),
                                         use_container_width=True,
-                                        key=f"efficiency_subject_{sel}_{p}_{tab_idx}"
+                                        key=f"efficiency_subject_{sel}_{p}_{tab_idx}",
                                     )
 
-                                # ─── INSERT NEW TIMEPOINT GRAPH HERE ───
+                                # ── Within-Session Timepoint Plot ──────────────────────────
                                 st.subheader(f"Within-Session Timepoint Data — {p}")
-                
-                                if "active_timestamps" in prog_sess.columns and "session_day" in prog_sess.columns:
-                                    # Create dropdown options combining Session Day and Date
-                                    session_options = prog_sess['session_day'].astype(str) + " (" + prog_sess['start_date'].dt.date.astype(str) + ")"
-                                    
-                                    selected_session = st.selectbox(
-                                        "Select a session to view correct response timepoints:", 
-                                        options=session_options, 
-                                        key=f"ts_sel_{sel}_{p}_{tab_idx}"
+
+                                if (
+                                    "active_timestamps" in prog_sess.columns
+                                    and "session_day" in prog_sess.columns
+                                ):
+                                    # Use DataFrame index as the unique row identifier to
+                                    # avoid collisions when two sessions share the same day number
+                                    prog_sess = prog_sess.reset_index(drop=True)
+                                    session_options = {
+                                        f"Session {row['session_day']} ({pd.Timestamp(row['start_date']).date() if pd.notna(row['start_date']) else 'unknown'}) — row {idx}": idx
+                                        for idx, row in prog_sess.iterrows()
+                                    }
+
+                                    selected_label = st.selectbox(
+                                        "Select a session to view active response timepoints:",
+                                        options=list(session_options.keys()),
+                                        key=f"ts_sel_{sel}_{p}_{tab_idx}",
                                     )
-                
-                                    if selected_session:
-                                        # Extract the selected Session Day number to filter
-                                        sel_day = int(selected_session.split(" ")[0])
-                                        session_data_row = prog_sess[prog_sess['session_day'] == sel_day].iloc[0]
-                                        
-                                        timestamps = session_data_row.get("active_timestamps", [])
-                                        duration = session_data_row.get("duration_sec", 0)
-                
-                                        # Draw the step-plot
+
+                                    if selected_label:
+                                        row_idx          = session_options[selected_label]
+                                        session_data_row = prog_sess.loc[row_idx]
+                                        timestamps       = session_data_row.get("active_timestamps", [])
+                                        duration         = session_data_row.get("duration_sec", 0)
+
                                         fig_ts = create_within_session_plot(timestamps, duration)
-                                        st.plotly_chart(fig_ts, use_container_width=True, key=f"ts_plot_{sel}_{p}_{tab_idx}")
+                                        st.plotly_chart(
+                                            fig_ts,
+                                            use_container_width=True,
+                                            key=f"ts_plot_{sel}_{p}_{tab_idx}",
+                                        )
                                 else:
-                                    st.info("Timepoint arrays (e.g., L) are not available or mapped for this program.")
-                                # ───────────────────────────────────────
+                                    st.info("Timepoint arrays are not available or mapped for this program.")
 
                                 st.subheader(f"Sessions — {p}")
                                 st.dataframe(prog_sess)
 
                     st.divider()
                     st.subheader("All Programs — Quick Stats")
-                    st.dataframe(subject_sess[["program_name", "start_date", "end_date", "infusions", "active_presses"]].sort_values("start_date"))
+                    st.dataframe(
+                        subject_sess[
+                            ["program_name", "start_date", "end_date", "infusions", "active_presses"]
+                        ].sort_values("start_date")
+                    )
 
         if st.button("🗑️ Clear & Restart"):
             for k in list(st.session_state):
