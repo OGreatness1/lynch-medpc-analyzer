@@ -305,6 +305,12 @@ def process_sessions(
         all_rows.append(row)
 
         # ── Hourly binning ──────────────────────────────────────────────────
+        # Only emit a row for hours that actually had events.
+        # Zero-padding every hour caused sawtooth/cycling plots because
+        # Plotly connected the zero-tails at the end of each session to the
+        # rising values at the start of the next one.
+        # session_day is stored on each row so plots can facet or filter
+        # by day without having to re-join against df_sessions.
         inf_ts_key = mapping.get("infusion_timestamps", "I")
         act_ts_key = mapping.get("active_timestamps",   "R")
 
@@ -312,20 +318,27 @@ def process_sessions(
             ts_inf = sess.arrays.get(inf_ts_key, []) if inf_ts_key else []
             ts_act = sess.arrays.get(act_ts_key, []) if act_ts_key else []
 
-            if duration_sec > 0:
-                max_h = int(duration_sec // 3600) + 1
-                for h in range(max_h + 1):
-                    all_hourly.append({
-                        "canonical_subject": canon,
-                        "gender":            gender,
-                        "program_name":      prog,
-                        "start_date":        start_dt,
-                        "hour":              h,
-                        "infusion_events":   sum(1 for t in ts_inf if int(t // 3600) == h),
-                        "active_events":     sum(1 for t in ts_act if int(t // 3600) == h),
-                        "Box":  row["Box"],
-                        "Room": row["Room"],
-                    })
+            # Determine the set of hours that have at least one event
+            active_hours = set()
+            for t in ts_inf:
+                active_hours.add(int(t // 3600))
+            for t in ts_act:
+                active_hours.add(int(t // 3600))
+
+            # session_day not yet computed — use a placeholder; it will be
+            # back-filled after df_sessions is built (see below)
+            for h in sorted(active_hours):
+                all_hourly.append({
+                    "canonical_subject": canon,
+                    "gender":            gender,
+                    "program_name":      prog,
+                    "start_date":        start_dt,
+                    "hour":              h,
+                    "infusion_events":   sum(1 for t in ts_inf if int(t // 3600) == h),
+                    "active_events":     sum(1 for t in ts_act if int(t // 3600) == h),
+                    "Box":  row["Box"],
+                    "Room": row["Room"],
+                })
 
     df_sessions = pd.DataFrame(all_rows)
     df_hourly   = pd.DataFrame(all_hourly)
@@ -342,6 +355,17 @@ def process_sessions(
 
     if not df_hourly.empty:
         df_hourly = df_hourly.sort_values(["canonical_subject", "start_date", "hour"])
+
+        # Back-fill session_day from df_sessions so hourly plots can use it
+        if not df_sessions.empty and "session_day" in df_sessions.columns:
+            day_map = df_sessions[
+                ["canonical_subject", "program_name", "start_date", "session_day"]
+            ].drop_duplicates()
+            df_hourly = df_hourly.merge(
+                day_map,
+                on=["canonical_subject", "program_name", "start_date"],
+                how="left"
+            )
 
     return df_sessions, df_hourly, found
 
