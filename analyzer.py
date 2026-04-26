@@ -388,7 +388,7 @@ def create_daily_summary(df_sessions: pd.DataFrame) -> pd.DataFrame:
     daily = daily.rename(columns={k: v for k, v in rename_map.items() if k in daily.columns})
     daily["session_count"] = df.groupby(group_keys).size().values
 
-    return daily.sort_values(["canonical_subject", "date"])
+    return daily.sort_values(["canonical_subject", "session_day"])
 
 def add_non_zero_inf_days(df_sessions: pd.DataFrame) -> pd.DataFrame:
     if df_sessions.empty:
