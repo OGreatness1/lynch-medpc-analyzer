@@ -326,9 +326,13 @@ def create_daily_summary(df_sessions: pd.DataFrame) -> pd.DataFrame:
     if 'start_date' in df.columns:
         df['start_date'] = pd.to_datetime(df['start_date'], errors='coerce')
         df = df.dropna(subset=['start_date'])
-    
-    df["date"] = df["start_date"].dt.date
-    group_keys = ["canonical_subject", "gender", "date"]
+        
+    # ─── NEW: Ensure session_day exists, fallback to 1 ───
+    if "session_day" not in df.columns:
+        df["session_day"] = 1
+
+    # ─── CHANGED: Group by relative session_day instead of calendar date ───
+    group_keys = ["canonical_subject", "gender", "session_day"]
 
     possible_agg = {
         "infusions": "sum",
@@ -358,7 +362,8 @@ def create_daily_summary(df_sessions: pd.DataFrame) -> pd.DataFrame:
 
     agg_dict = {col: func for col, func in possible_agg.items() if col in df.columns}
     daily = df.groupby(group_keys).agg(agg_dict).reset_index()
-
+    
+    # ... (Keep your existing rename_map and return logic exactly as it is below this point) ...
     rename_map = {
         "infusions": "total_infusions",
         "active_presses": "total_active_presses",
