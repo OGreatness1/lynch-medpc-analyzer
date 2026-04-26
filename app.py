@@ -496,7 +496,7 @@ if 'df_sess' in st.session_state and st.session_state.df_sess is not None and no
                                     )
 
 								# ─── INSERT NEW TIMEPOINT GRAPH HERE ───
-								st.subheader(f"Within-Session Timepoint Data — {p}")
+					st.subheader(f"Within-Session Timepoint Data — {p}")
 				
 								if "active_timestamps" in prog_sess.columns and "session_day" in prog_sess.columns:
 									# Create dropdown options combining Session Day and Date
