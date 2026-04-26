@@ -176,7 +176,6 @@ def create_hourly_line_plot(hr: pd.DataFrame, title: str = "Avg Infusions by Hou
     agg = sum_by_hour.merge(n_sessions, on="canonical_subject", how="left")
     agg["avg_infusion_events"] = agg["total_infusion_events"] / agg["n_sessions"]
     agg = agg.sort_values(["canonical_subject", "hour"])
-
     fig = px.line(
         agg, x="hour", y="avg_infusion_events",
         color="canonical_subject", title=title, markers=True,
