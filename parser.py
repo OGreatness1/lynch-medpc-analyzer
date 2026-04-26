@@ -34,10 +34,11 @@ class MedPCParser:
 
     def _extract_session_blocks(self, content: str) -> List[str]:
         """
-        Split a multi-session file into individual session blocks.
+        Split a multi-session MedPC file into individual session blocks.
+
         Primary delimiters: \\MPC header, 'Start Date:', or ===== lines.
-        Fallback: a blank line followed immediately by a known metadata key,
-        which handles older MedPC formats that lack explicit delimiters.
+        Fallback: a blank line immediately before a metadata key line,
+        which handles older formats without explicit delimiters.
         """
         blocks = []
         current_lines = []
@@ -55,13 +56,6 @@ class MedPCParser:
                 or re.match(r"={5,}", stripped)
             )
 
-            # Fallback delimiter: blank line followed by a metadata key
-            is_fallback_delimiter = (
-                not stripped
-                and current_lines
-                and "Start Date:" in "\n".join(current_lines[-5:])
-            )
-
             if is_delimiter:
                 if current_lines:
                     block = "\n".join(current_lines).strip()
@@ -69,10 +63,10 @@ class MedPCParser:
                         blocks.append(block)
                 current_lines = [line]
             else:
-                # Check if this line starts a new session header after a gap
+                # Fallback: blank line followed immediately by a metadata key
                 if (
                     current_lines
-                    and not current_lines[-1].strip()  # previous line was blank
+                    and not current_lines[-1].strip()
                     and any(stripped_lower.startswith(t) for t in METADATA_TRIGGERS)
                     and "Start Date:" in "\n".join(current_lines)
                 ):
@@ -83,7 +77,6 @@ class MedPCParser:
                 else:
                     current_lines.append(line)
 
-        # Flush final block
         if current_lines:
             block = "\n".join(current_lines).strip()
             if len(block) > 150 and "Start Date:" in block:
@@ -93,9 +86,9 @@ class MedPCParser:
 
     def _safe_float(self, s: str) -> Optional[float]:
         """
-        Safely convert a string to float.
+        Safely parse a string as float.
         Handles integers, decimals, and scientific notation (e.g. 1.5e+03).
-        Returns None on failure instead of raising.
+        Returns None on failure — never raises.
         """
         try:
             return float(s)
@@ -127,18 +120,19 @@ class MedPCParser:
         # ── 2. Scalars ────────────────────────────────────────────────────────
         while i < len(lines):
             line = lines[i].strip()
-            scalar_match = re.match(r"^([A-Z]):\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\s*$", line)
+            # Match lines like "A: 123.45" or "Z: 0"
+            scalar_match = re.match(
+                r"^([A-Z]):\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\s*$", line
+            )
             if scalar_match:
                 var = scalar_match.group(1)
                 val = self._safe_float(scalar_match.group(2))
                 if val is not None:
                     scalars[var] = val
             elif re.match(r"^[A-Z]:$", line) or line.startswith("\\") or re.match(r"={5,}", line):
-                # Hit an array header or section delimiter — stop scalar parsing
-                break
+                break  # hit an array header or section separator
             elif not line:
-                # Blank line: continue (some files have gaps between scalars)
-                pass
+                pass   # blank lines are fine between scalars
             i += 1
 
         # ── 3. Arrays ─────────────────────────────────────────────────────────
@@ -148,7 +142,7 @@ class MedPCParser:
         while i < len(lines):
             line = lines[i].strip()
 
-            # New array header (e.g. "A:" or "B:" on its own line)
+            # Array header: a single letter followed by colon on its own line
             m = re.match(r"^([A-Z]):$", line)
             if m:
                 if current_var is not None and current_data:
@@ -157,11 +151,11 @@ class MedPCParser:
                 current_data = []
 
             elif current_var is not None and line:
-                # Strip leading row index (e.g. "     0:", "     5:")
+                # Strip leading row index (e.g. "     0:  " or "     5:  ")
                 clean_line = re.sub(r"^\s*\d+:\s*", "", line)
-
-                # Parse each whitespace-separated token as a float
-                # This correctly handles integers, decimals, and scientific notation
+                # Parse every whitespace-separated token as a float.
+                # Using try/except float() handles integers, decimals,
+                # AND scientific notation (e.g. 1.5e+03) — unlike .isdigit().
                 for token in clean_line.split():
                     val = self._safe_float(token)
                     if val is not None:
@@ -169,7 +163,6 @@ class MedPCParser:
 
             i += 1
 
-        # Flush final array
         if current_var is not None and current_data:
             arrays[current_var] = current_data
 
