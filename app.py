@@ -81,9 +81,8 @@ with st.sidebar:
 
     st.header("Data Files")
     data_files = st.file_uploader(
-        "MedPC .txt / .zip files",
+        "MedPC .txt / .zip / extensionless files",
         accept_multiple_files=True,
-        type=["txt", "zip"],
     )
 
     st.header("Cohort Hard-Filter")
@@ -191,7 +190,10 @@ if st.button("🚀 Run Analysis", type="primary"):
                 raw_bytes = f.getvalue()
 
                 # ── Handle .zip files ──────────────────────────────────────
-                if f.name.lower().endswith(".zip"):
+                # Detect by magic bytes (PK\x03\x04) rather than file extension
+                # so renamed or extensionless ZIPs are also handled correctly.
+                is_zip = raw_bytes[:4] == b"PK\x03\x04"
+                if is_zip:
                     with zipfile.ZipFile(io.BytesIO(raw_bytes)) as zf:
                         for inner_name in zf.namelist():
                             if inner_name.lower().endswith(".txt"):
