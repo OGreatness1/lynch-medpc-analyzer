@@ -5,7 +5,8 @@ import pandas as pd
 def canonicalize_id(subject_id: str) -> str:
     """
     Normalizes Subject IDs to prevent 0/O confusion and whitespace issues.
-    Handles None and NaN gracefully.
+    Only replaces a leading O when followed by a digit (O12F → 012F),
+    so IDs that genuinely start with the letter O are not corrupted.
     """
     try:
         if subject_id is None or (isinstance(subject_id, float) and pd.isna(subject_id)):
@@ -15,7 +16,6 @@ def canonicalize_id(subject_id: str) -> str:
     s = str(subject_id).strip().upper()
     if not s:
         return ""
-    # Replace leading letter O with zero (common MedPC data-entry error)
     return re.sub(r"^O(?=\d)", "0", s)
 
 
