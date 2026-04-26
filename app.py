@@ -101,7 +101,6 @@ with st.sidebar:
         mouse_cohorts = {"G126", "G126A", "G126B"}
         selected_cohorts = list(set(selected_cohorts) | mouse_cohorts)
 
-	
     st.header("Custom Flag Thresholds")
     min_active_presses = st.slider("Min active presses (low activity)", 0, 50, 5)
     max_inactive_ratio = st.slider("Max inactive/active ratio", 0.0, 2.0, 0.4, 0.05)
@@ -154,7 +153,6 @@ with st.sidebar:
             step=0.01,
             help="Concentration in syringe — used for mg/kg intake"
         )
-    # None or unknown → use default (no estimate)
 
     show_debug = st.checkbox("Show skipped sessions & raw debug", False)
 
@@ -199,17 +197,16 @@ if st.button("🚀 Run Analysis", type="primary"):
 
         df_sess, df_hr, found_ids = process_sessions(
             all_sessions,
-    	    allowed_ids=allowed_canon or None,
-    	    custom_patterns=custom_patterns,
-   	    custom_mappings=custom_mappings,
-   	    drug_type=drug_type,
-   	    avg_weight_g=avg_weight_g,
-	    conc_mgml=conc_mgml  # ← NEW
-	)
+            allowed_ids=allowed_canon or None,
+            custom_patterns=custom_patterns,
+            custom_mappings=custom_mappings,
+            drug_type=drug_type,
+            avg_weight_g=avg_weight_g,
+            conc_mgml=conc_mgml
+        )
 
-                # Cohort hard filter
+        # Cohort hard filter
         if "All Others" not in selected_cohorts:
-            # Join all selected cohorts with | for regex matching
             cohort_pattern = '|'.join(selected_cohorts)
             mask = df_sess["canonical_subject"].str.contains(cohort_pattern, case=False, na=False)
             
@@ -217,6 +214,7 @@ if st.button("🚀 Run Analysis", type="primary"):
             
             if not df_hr.empty:
                 df_hr = df_hr[df_hr["canonical_subject"].isin(df_sess["canonical_subject"])].copy()
+
         # Apply flags with custom thresholds
         df_sess = generate_pattern_flags(
             df_sess,
@@ -234,7 +232,7 @@ if st.button("🚀 Run Analysis", type="primary"):
             'analysis_run': True
         })
         st.rerun()
-       
+        
 # ────────────────────────────────────────────────
 # Results / Dashboard (when analysis has run)
 # ────────────────────────────────────────────────
@@ -250,7 +248,7 @@ if 'df_sess' in st.session_state and st.session_state.df_sess is not None and no
     else:
         # ───── Missing + Box/Room Report ─────
         st.header("Subject Coverage & Box/Room")
-        expected = set()  # could reload from id_file if needed
+        expected = set()
         report_missing_and_box_room(expected, found_ids, df_sess)
 
         # ───── Metrics ─────
@@ -284,11 +282,9 @@ if 'df_sess' in st.session_state and st.session_state.df_sess is not None and no
 
                 zf.writestr(f"{safe}_Full_Analysis.xlsx", excel_buf.getvalue())
 
-
                 # ───── Matplotlib plots saved to ZIP ─────
                 plot_list = []
 
-                # Daily infusions line plot
                 if not daily.empty:
                     buf = create_plot(
                         daily, "first_session_time", "total_infusions",
@@ -297,7 +293,6 @@ if 'df_sess' in st.session_state and st.session_state.df_sess is not None and no
                     if buf:
                         plot_list.append((buf, "01_Daily_Infusions_Line"))
 
-                # Hourly infusions
                 if not sub_h.empty:
                     buf = create_plot(
                         sub_h, "hour", "infusion_events",
@@ -313,7 +308,6 @@ if 'df_sess' in st.session_state and st.session_state.df_sess is not None and no
                     if buf:
                         plot_list.append((buf, "03_Hourly_Active"))
 
-                # Efficiency scatter
                 if not sub_s.empty:
                     buf = create_plot(
                         sub_s, "active_presses", "infusions",
@@ -323,7 +317,6 @@ if 'df_sess' in st.session_state and st.session_state.df_sess is not None and no
                     if buf:
                         plot_list.append((buf, "04_Efficiency_Scatter"))
 
-                # Gender boxplot (if gender data exists)
                 if not daily.empty and "gender" in daily.columns:
                     buf = create_plot(
                         daily, "gender", "total_infusions",
@@ -333,7 +326,6 @@ if 'df_sess' in st.session_state and st.session_state.df_sess is not None and no
                     if buf:
                         plot_list.append((buf, "05_Infusions_by_Gender_Box"))
 
-                # Save all plots to ZIP under Plots/{prog}/
                 for plt_buf, name in plot_list:
                     if plt_buf:
                         zf.writestr(f"Plots/{safe}/{name}.png", plt_buf.getvalue())
@@ -348,7 +340,7 @@ if 'df_sess' in st.session_state and st.session_state.df_sess is not None and no
         st.balloons()
         st.success("Analysis complete!")
 
-                # ───── Live Dashboard Tabs ─────
+        # ───── Live Dashboard Tabs ─────
         st.header("Live Dashboard")
         tab_cohort, tab_advanced, tab_subject = st.tabs(["Cohort View", "Cross-Program", "Single Subject"])
 
@@ -409,7 +401,6 @@ if 'df_sess' in st.session_state and st.session_state.df_sess is not None and no
         with tab_subject:
             sel = st.selectbox("Select Subject", sorted(found_ids))
             if sel:
-                # Filter data for this subject
                 subject_sess = df_sess[df_sess["canonical_subject"] == sel].copy()
                 subject_hr = df_hr[df_hr["canonical_subject"] == sel].copy() if not df_hr.empty else pd.DataFrame()
 
@@ -474,7 +465,6 @@ if 'df_sess' in st.session_state and st.session_state.df_sess is not None and no
                                         key=f"discrimination_subject_{sel}_{p}_{tab_idx}"
                                     )
 
-                                if not prog_sess.empty and "active_presses" in prog_sess.columns:
                                     st.plotly_chart(
                                         create_response_rate_plot(prog_sess),
                                         use_container_width=True,
@@ -495,36 +485,35 @@ if 'df_sess' in st.session_state and st.session_state.df_sess is not None and no
                                         key=f"efficiency_subject_{sel}_{p}_{tab_idx}"
                                     )
 
-								# ─── INSERT NEW TIMEPOINT GRAPH HERE ───
-					st.subheader(f"Within-Session Timepoint Data — {p}")
-				
-								if "active_timestamps" in prog_sess.columns and "session_day" in prog_sess.columns:
-									# Create dropdown options combining Session Day and Date
-									session_options = prog_sess['session_day'].astype(str) + " (" + prog_sess['start_date'].astype(str) + ")"
-									
-									selected_session = st.selectbox(
-										"Select a session to view correct response timepoints:", 
-										options=session_options, 
-										key=f"ts_sel_{sel}_{p}_{tab_idx}"
-									)
-				
-									if selected_session:
-										# Extract the selected Session Day number to filter
-										sel_day = int(selected_session.split(" ")[0])
-										session_data_row = prog_sess[prog_sess['session_day'] == sel_day].iloc[0]
-										
-										timestamps = session_data_row.get("active_timestamps", [])
-										duration = session_data_row.get("duration_sec", 0)
-				
-										# Draw the step-plot
-										fig_ts = create_within_session_plot(timestamps, duration)
-										st.plotly_chart(fig_ts, use_container_width=True, key=f"ts_plot_{sel}_{p}_{tab_idx}")
-								else:
-									st.info("Timepoint arrays (e.g., L) are not available or mapped for this program.")
-								# ───────────────────────────────────────
+                                # ─── INSERT NEW TIMEPOINT GRAPH HERE ───
+                                st.subheader(f"Within-Session Timepoint Data — {p}")
+                
+                                if "active_timestamps" in prog_sess.columns and "session_day" in prog_sess.columns:
+                                    # Create dropdown options combining Session Day and Date
+                                    session_options = prog_sess['session_day'].astype(str) + " (" + prog_sess['start_date'].astype(str) + ")"
+                                    
+                                    selected_session = st.selectbox(
+                                        "Select a session to view correct response timepoints:", 
+                                        options=session_options, 
+                                        key=f"ts_sel_{sel}_{p}_{tab_idx}"
+                                    )
+                
+                                    if selected_session:
+                                        # Extract the selected Session Day number to filter
+                                        sel_day = int(selected_session.split(" ")[0])
+                                        session_data_row = prog_sess[prog_sess['session_day'] == sel_day].iloc[0]
+                                        
+                                        timestamps = session_data_row.get("active_timestamps", [])
+                                        duration = session_data_row.get("duration_sec", 0)
+                
+                                        # Draw the step-plot
+                                        fig_ts = create_within_session_plot(timestamps, duration)
+                                        st.plotly_chart(fig_ts, use_container_width=True, key=f"ts_plot_{sel}_{p}_{tab_idx}")
+                                else:
+                                    st.info("Timepoint arrays (e.g., L) are not available or mapped for this program.")
+                                # ───────────────────────────────────────
 
-                               
-								st.subheader(f"Sessions — {p}")
+                                st.subheader(f"Sessions — {p}")
                                 st.dataframe(prog_sess)
 
                     st.divider()
@@ -538,4 +527,3 @@ if 'df_sess' in st.session_state and st.session_state.df_sess is not None and no
 
 else:
     st.info("Upload ID list + data files, then click Run Analysis.")
-
