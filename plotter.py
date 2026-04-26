@@ -118,35 +118,75 @@ def create_interactive_plot(
 
 def create_hourly_line_plot(hr: pd.DataFrame, title: str = "Avg Infusions by Hour of Session"):
     """
-    Mean infusion events per hour, averaged across all sessions per subject.
+    Mean infusion events per hour of session, averaged over ALL sessions per
+    subject (including sessions where that hour had zero events).
 
-    WHY a dedicated function instead of passing sub_h raw to
-    create_interactive_plot:  sub_h has one row per (subject, session, hour).
-    Plotting x="hour" on that directly draws one line that connects all hours
-    in row order across sessions, zigzagging back and forth — the 'cycling'
-    appearance.  Aggregating to one row per (subject, hour) first produces a
-    clean left-to-right profile curve for each animal.
+    WHY a dedicated function:
+      sub_h has one row per (subject, session, hour) — but only for hours that
+      had at least one event (zero-event hours are not stored).  Passing that
+      raw to create_interactive_plot draws one line connecting all hours in row
+      order across sessions, zigzagging back and forth → cycling appearance.
+
+    WHY .mean() alone is wrong:
+      Because we only store active hours, a session where the animal had zero
+      infusions in hour 2 contributes NO row for hour 2.  Taking .mean() over
+      the rows that DO exist divides by sessions-with-activity, not total
+      sessions — making the average artificially inflated.
+
+    Correct approach:
+      1. Sum all infusion events per (subject, hour) across the whole cohort.
+      2. Divide by the total number of sessions for that subject (including
+         sessions with zero events in that hour).
+      This gives a true mean that correctly pulls the average down for hours
+      where many sessions had zero activity.
     """
     if hr.empty or "infusion_events" not in hr.columns:
         return go.Figure().update_layout(title=f"{title} — No Data")
 
-    agg = (
+    # Total sessions per subject (the correct denominator)
+    # Use start_date to count unique sessions; fall back to session_day if present
+    if "start_date" in hr.columns:
+        n_sessions = (
+            hr.groupby("canonical_subject")["start_date"]
+            .nunique()
+            .reset_index(name="n_sessions")
+        )
+    elif "session_day" in hr.columns:
+        n_sessions = (
+            hr.groupby("canonical_subject")["session_day"]
+            .nunique()
+            .reset_index(name="n_sessions")
+        )
+    else:
+        # Last resort: count all rows then divide by max_hour+1
+        n_sessions = (
+            hr.groupby("canonical_subject")["hour"]
+            .nunique()
+            .reset_index(name="n_sessions")
+        )
+
+    # Sum of infusion events across all sessions for each (subject, hour)
+    sum_by_hour = (
         hr.groupby(["canonical_subject", "hour"])["infusion_events"]
-        .mean()
-        .reset_index()
-        .rename(columns={"infusion_events": "avg_infusion_events"})
-        .sort_values(["canonical_subject", "hour"])
+        .sum()
+        .reset_index(name="total_infusion_events")
     )
+
+    # Merge and divide sum by total sessions → true mean per hour
+    agg = sum_by_hour.merge(n_sessions, on="canonical_subject", how="left")
+    agg["avg_infusion_events"] = agg["total_infusion_events"] / agg["n_sessions"]
+    agg = agg.sort_values(["canonical_subject", "hour"])
 
     fig = px.line(
         agg, x="hour", y="avg_infusion_events",
         color="canonical_subject", title=title, markers=True,
+        hover_data={"total_infusion_events": True, "n_sessions": True},
         color_discrete_sequence=LYNCH_COLORS,
     )
     fig.update_layout(
         template="plotly_white", height=600,
         xaxis_title="Hour of Session",
-        yaxis_title="Avg Infusion Events",
+        yaxis_title="Avg Infusion Events (per session)",
         legend_title_text="Subject",
         xaxis=dict(dtick=1),
     )
