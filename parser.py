@@ -154,11 +154,14 @@ class MedPCParser:
                 # Strip leading row index (e.g. "     0:  " or "     5:  ")
                 clean_line = re.sub(r"^\s*\d+:\s*", "", line)
                 # Parse every whitespace-separated token as a float.
-                # Using try/except float() handles integers, decimals,
-                # AND scientific notation (e.g. 1.5e+03) — unlike .isdigit().
+                # Filter out negative values — -987.987 is MedPC's end-of-data
+                # sentinel written at the end of valid data in fixed-size arrays.
+                # No legitimate timestamp or count in any Lynch Lab program is
+                # negative, so filtering val < 0 safely removes the sentinel
+                # and any other artefacts without discarding real data.
                 for token in clean_line.split():
                     val = self._safe_float(token)
-                    if val is not None:
+                    if val is not None and val >= 0:
                         current_data.append(val)
 
             i += 1
