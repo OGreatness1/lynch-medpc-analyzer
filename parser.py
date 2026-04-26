@@ -2,6 +2,7 @@ import re
 from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
 
+
 @dataclass
 class ParsedSession:
     meta: Dict[str, str]
@@ -10,11 +11,12 @@ class ParsedSession:
     filename: str
     raw_block: str
 
+
 class MedPCParser:
     def __init__(self):
         self.skipped_sessions: List[Tuple[str, str, str]] = []  # (filename, reason, snippet)
 
-    def parse_file(self, content: str, filename: str) -> List[ParsedSession]:
+    def parse_file(self, content: str, filename: str) -> List["ParsedSession"]:
         """Split file into session blocks and parse each one."""
         session_blocks = self._extract_session_blocks(content)
         parsed = []
@@ -31,26 +33,57 @@ class MedPCParser:
         return parsed
 
     def _extract_session_blocks(self, content: str) -> List[str]:
+        """
+        Split a multi-session file into individual session blocks.
+        Primary delimiters: \\MPC header, 'Start Date:', or ===== lines.
+        Fallback: a blank line followed immediately by a known metadata key,
+        which handles older MedPC formats that lack explicit delimiters.
+        """
         blocks = []
         current_lines = []
         lines = content.splitlines()
 
+        METADATA_TRIGGERS = {"start date:", "subject:", "msn:", "experiment:"}
+
         for line in lines:
             stripped = line.strip()
-            if (
+            stripped_lower = stripped.lower()
+
+            is_delimiter = (
                 (stripped.startswith("\\") and "MPC" in stripped.upper())
                 or stripped.startswith("Start Date:")
                 or re.match(r"={5,}", stripped)
-                or (stripped == "" and current_lines and "Start Date:" in "".join(current_lines))
-            ):
+            )
+
+            # Fallback delimiter: blank line followed by a metadata key
+            is_fallback_delimiter = (
+                not stripped
+                and current_lines
+                and "Start Date:" in "\n".join(current_lines[-5:])
+            )
+
+            if is_delimiter:
                 if current_lines:
                     block = "\n".join(current_lines).strip()
                     if len(block) > 150 and "Start Date:" in block:
                         blocks.append(block)
                 current_lines = [line]
             else:
-                current_lines.append(line)
+                # Check if this line starts a new session header after a gap
+                if (
+                    current_lines
+                    and not current_lines[-1].strip()  # previous line was blank
+                    and any(stripped_lower.startswith(t) for t in METADATA_TRIGGERS)
+                    and "Start Date:" in "\n".join(current_lines)
+                ):
+                    block = "\n".join(current_lines).strip()
+                    if len(block) > 150 and "Start Date:" in block:
+                        blocks.append(block)
+                    current_lines = [line]
+                else:
+                    current_lines.append(line)
 
+        # Flush final block
         if current_lines:
             block = "\n".join(current_lines).strip()
             if len(block) > 150 and "Start Date:" in block:
@@ -58,14 +91,25 @@ class MedPCParser:
 
         return blocks
 
-    def _parse_single_session(self, block: str, filename: str) -> Optional[ParsedSession]:
+    def _safe_float(self, s: str) -> Optional[float]:
+        """
+        Safely convert a string to float.
+        Handles integers, decimals, and scientific notation (e.g. 1.5e+03).
+        Returns None on failure instead of raising.
+        """
+        try:
+            return float(s)
+        except (ValueError, TypeError):
+            return None
+
+    def _parse_single_session(self, block: str, filename: str) -> Optional["ParsedSession"]:
         lines = block.splitlines()
         meta = {}
         scalars = {}
         arrays = {}
         i = 0
 
-        # 1. Metadata / Header
+        # ── 1. Metadata / Header ──────────────────────────────────────────────
         while i < len(lines) and not re.match(r"^[A-Z]:\s", lines[i].strip()):
             line = lines[i].strip()
             if ":" in line and not line.startswith("\\"):
@@ -80,50 +124,56 @@ class MedPCParser:
                     meta[key] = val
             i += 1
 
-        # 2. Scalars
+        # ── 2. Scalars ────────────────────────────────────────────────────────
         while i < len(lines):
             line = lines[i].strip()
-            if re.match(r"^[A-Z]:\s*-?\d+(\.\d+)?", line):
-                var, val_str = [part.strip() for part in line.split(":", 1)]
-                try:
-                    scalars[var] = float(val_str)
-                except ValueError:
-                    pass
-            # ─── CRITICAL FIX: Break scalar loop if it hits an Array Header (e.g., "A:") ───
-            elif re.match(r"^[A-Z]:$", line) or line.startswith("\\") or line.startswith("=" * 5) or not line:
+            scalar_match = re.match(r"^([A-Z]):\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\s*$", line)
+            if scalar_match:
+                var = scalar_match.group(1)
+                val = self._safe_float(scalar_match.group(2))
+                if val is not None:
+                    scalars[var] = val
+            elif re.match(r"^[A-Z]:$", line) or line.startswith("\\") or re.match(r"={5,}", line):
+                # Hit an array header or section delimiter — stop scalar parsing
                 break
+            elif not line:
+                # Blank line: continue (some files have gaps between scalars)
+                pass
             i += 1
 
-        # 3. Arrays
+        # ── 3. Arrays ─────────────────────────────────────────────────────────
         current_var = None
         current_data = []
 
         while i < len(lines):
             line = lines[i].strip()
 
-            # New array header
+            # New array header (e.g. "A:" or "B:" on its own line)
             m = re.match(r"^([A-Z]):$", line)
             if m:
-                if current_var and current_data:
+                if current_var is not None and current_data:
                     arrays[current_var] = current_data
                 current_var = m.group(1)
                 current_data = []
-            
-            # ─── CRITICAL FIX: Clean array rows (strip out "0:", "5:", etc.) ───
-            elif current_var:
-                clean_line = re.sub(r"^\d+:\s*", "", line)
-                if clean_line and re.match(r"^[-\d\s\.eE]+$", clean_line.replace(" ", "")):
-                    try:
-                        vals = [float(x) for x in clean_line.split() if x.strip("-").replace(".", "").isdigit()]
-                        current_data.extend(vals)
-                    except ValueError:
-                        pass
+
+            elif current_var is not None and line:
+                # Strip leading row index (e.g. "     0:", "     5:")
+                clean_line = re.sub(r"^\s*\d+:\s*", "", line)
+
+                # Parse each whitespace-separated token as a float
+                # This correctly handles integers, decimals, and scientific notation
+                for token in clean_line.split():
+                    val = self._safe_float(token)
+                    if val is not None:
+                        current_data.append(val)
 
             i += 1
 
-        if current_var and current_data:
+        # Flush final array
+        if current_var is not None and current_data:
             arrays[current_var] = current_data
 
+        # ── Validation ────────────────────────────────────────────────────────
         if not meta.get("Start Date") or not meta.get("Subject"):
             raise ValueError("Missing required metadata (Start Date or Subject)")
 
