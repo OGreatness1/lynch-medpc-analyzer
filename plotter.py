@@ -14,9 +14,10 @@ LYNCH_COLORS = px.colors.qualitative.Set2 + px.colors.qualitative.Pastel
 def get_date_column(df: pd.DataFrame) -> str | None:
     """
     Helper: Automatically detect the most likely date/time column.
-    Used to make plots robust across raw sessions and aggregated daily data.
+    PRIORITIZES session_day over calendar dates.
     """
-    possible = ["start_date", "first_session_time", "date", "end_date"]
+    # session_day is listed first to guarantee it overrides calendar dates
+    possible = ["session_day", "start_date", "first_session_time", "date", "end_date"]
     for col in possible:
         if col in df.columns:
             return col
@@ -168,12 +169,12 @@ def create_cumulative_plot(sess: pd.DataFrame):
     )
 
     fig.update_layout(
-        xaxis_title="Date",
+        xaxis_title="Session Day" if date_col == "session_day" else "Date",
         yaxis_title="Cumulative Infusions",
         template="plotly_white",
         hovermode="x unified",
         xaxis=dict(
-            tickformat="%Y-%m-%d",
+            # Removed tickformat="%Y-%m-%d" so integers plot correctly
             tickangle=45,
             rangeslider_visible=True
         ),
@@ -346,8 +347,7 @@ def create_mean_sem_trajectory(daily: pd.DataFrame):
         yaxis_title="Infusions (Mean ± SEM)",
         template="plotly_white",
         hovermode="x unified",
-        xaxis=dict(
-            tickformat="%Y-%m-%d",
+        xaxis=dict(            
             tickangle=45,
             rangeslider_visible=True
         ),
