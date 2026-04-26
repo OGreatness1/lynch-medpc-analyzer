@@ -23,6 +23,7 @@ from plotter import (
     create_cumulative_plot, create_discrimination_plot,
     create_pr_breakpoint_plot, create_efficiency_trend,
     create_response_rate_plot, create_hourly_heatmap,
+    create_hourly_line_plot,
     create_mean_sem_trajectory,
     create_within_session_plot,
 )
@@ -399,9 +400,9 @@ if (
                     with c2:
                         if not sub_h.empty:
                             st.plotly_chart(
-                                create_interactive_plot(
-                                    sub_h, "hour", "infusion_events",
-                                    f"Hourly Infusions — {p}", "canonical_subject", kind="line"
+                                create_hourly_line_plot(
+                                    sub_h,
+                                    f"Avg Infusions by Hour — {p}",
                                 ),
                                 use_container_width=True,
                                 key=f"hourly_infusions_{p}_{tab_idx}",
