@@ -190,16 +190,32 @@ if 'df_sess' in st.session_state and st.session_state.df_sess is not None and no
                     generate_pattern_flags(sub_s).to_excel(w, sheet_name="Flags", index=False)
                 zf.writestr(f"{safe}_Full_Analysis.xlsx", excel_buf.getvalue())
 
+                # ───── Matplotlib plots saved to ZIP ─────
                 plot_list = []
-                if not daily.empty:
-                    buf = create_plot(daily, "session_day", "total_infusions", f"Daily Infusions - {prog}", "canonical_subject", kind="line")
-                    if buf: plot_list.append((buf, "01_Daily_Infusions_Line"))
-                if _hr_ok(sub_h):
-                    buf = create_plot(sub_h, "hour", "infusion_events", f"Hourly Infusions - {prog}", "canonical_subject")
-                    if buf: plot_list.append((buf, "02_Hourly_Infusions"))
-                for plt_buf, name in plot_list:
-                    if plt_buf: zf.writestr(f"Plots/{safe}/{name}.png", plt_buf.getvalue())
 
+                if not daily.empty:
+                    buf = create_plot(
+                        daily, "session_day", "total_infusions",
+                        f"Daily Infusions - {prog}", "canonical_subject", kind="line"
+                    )
+                    if buf:
+                        plot_list.append((buf, "01_Daily_Infusions_Line"))
+
+                if _hr_ok(sub_h):
+                    buf = create_plot(
+                        sub_h, "hour", "infusion_events",
+                        f"Hourly Infusions - {prog}", "canonical_subject"
+                    )
+                    if buf:
+                        plot_list.append((buf, "02_Hourly_Infusions"))
+
+                    # ─── RESTORED: Hourly Active Presses Export ───
+                    buf = create_plot(
+                        sub_h, "hour", "active_events",
+                        f"Hourly Active Presses - {prog}", "canonical_subject"
+                    )
+                    if buf:
+                        plot_list.append((buf, "03_Hourly_Active"))
         st.download_button("📥 Download ZIP (All Programs + Plots + Logs)", zip_buffer.getvalue(), f"MedPC_{datetime.now():%Y%m%d_%H%M}.zip", "application/zip")
         st.success("Analysis complete!")
 
