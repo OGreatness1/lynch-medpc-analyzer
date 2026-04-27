@@ -90,6 +90,26 @@ def create_interactive_plot(data, x, y, title, hue=None, kind="line",
                       yaxis_title=y.replace("_", " ").title())
     return fig
 
+def create_efficiency_trend(daily: pd.DataFrame):
+    """
+    Line plot showing Efficiency (Total Infusions / (Total Active Presses + 1))
+    across sessions.
+    """
+    if daily.empty or "total_active_presses" not in daily.columns:
+        return go.Figure().update_layout(title="Efficiency Trend — No Data")
+
+    date_col = get_date_column(daily)
+    if date_col is None:
+        return go.Figure().update_layout(title="Efficiency Trend — No Date Column")
+
+    df = daily.copy()
+    # Add 1 to the denominator to prevent division by zero
+    df["efficiency"] = df["total_infusions"] / (df["total_active_presses"] + 1)
+
+    return create_interactive_plot(
+        df, x=date_col, y="efficiency", title="Efficiency Trend (Rewards / Effort)",
+        hue="canonical_subject", kind="line"
+    )
 
 def create_hourly_line_plot(hr: pd.DataFrame, title: str = "Avg Infusions by Hour of Session"):
     """
