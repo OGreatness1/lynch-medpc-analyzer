@@ -12,9 +12,21 @@ class ParsedSession:
     raw_block: str
 
 
+# MedPC inter-session separator pattern.
+# Between sessions MedPC writes:
+#   <blank line>
+#   <session counter — a bare integer, possibly with leading whitespace>
+#   <blank line>
+#   Start Date: ...
+#
+# The session-counter line looks like "    4" or "  153".
+# It must be recognised as a separator / discarded, NOT parsed as array data.
+_SESSION_COUNTER_RE = re.compile(r"^\s*\d+\s*$")
+
+
 class MedPCParser:
     def __init__(self):
-        self.skipped_sessions: List[Tuple[str, str, str]] = []  # (filename, reason, snippet)
+        self.skipped_sessions: List[Tuple[str, str, str]] = []
 
     def parse_file(self, content: str, filename: str) -> List["ParsedSession"]:
         """Split file into session blocks and parse each one."""
@@ -32,61 +44,81 @@ class MedPCParser:
 
         return parsed
 
+    def _is_session_separator(self, line: str) -> bool:
+        """
+        Return True for lines that are part of MedPC's inter-session separator:
+          - Blank / whitespace-only lines
+          - Lines containing only a bare integer (the session counter)
+          - File header lines  (e.g.  'File: C:\\MED-PC IV\\DATA\\!2026-01-15')
+        """
+        stripped = line.strip()
+        if not stripped:
+            return True
+        if _SESSION_COUNTER_RE.match(stripped):
+            return True
+        if stripped.lower().startswith("file:") or stripped.lower().startswith("file "):
+            return True
+        return False
+
     def _extract_session_blocks(self, content: str) -> List[str]:
         """
-        Split a multi-session MedPC file into individual session blocks.
+        Split a multi-session MedPC export file into individual session blocks.
 
-        Primary delimiters: \\MPC header, 'Start Date:', or ===== lines.
-        Fallback: a blank line immediately before a metadata key line,
-        which handles older formats without explicit delimiters.
+        MedPC inter-session format (confirmed from real data files):
+            <blank>
+            <session-counter integer>   ← bare number, not a data line
+            <blank>
+            Start Date: MM/DD/YY
+            ...
+
+        Primary delimiter:  any line that starts with 'Start Date:'
+        Secondary delimiter: \\FILENAME.MPC header or ===== separator lines
+        All separator/File/counter lines are dropped from the block content.
         """
         blocks = []
-        current_lines = []
-        lines = content.splitlines()
+        current_lines: List[str] = []
 
-        METADATA_TRIGGERS = {"start date:", "subject:", "msn:", "experiment:"}
-
-        for line in lines:
+        for line in content.splitlines():
             stripped = line.strip()
-            stripped_lower = stripped.lower()
 
-            is_delimiter = (
-                (stripped.startswith("\\") and "MPC" in stripped.upper())
-                or stripped.startswith("Start Date:")
-                or re.match(r"={5,}", stripped)
-            )
-
-            if is_delimiter:
+            # ── Primary delimiter: Start Date: line ───────────────────────────
+            if stripped.startswith("Start Date:"):
                 if current_lines:
                     block = "\n".join(current_lines).strip()
-                    if len(block) > 150 and "Start Date:" in block:
+                    if "Start Date:" in block and len(block) > 50:
                         blocks.append(block)
+                # Begin new block with this line
                 current_lines = [line]
-            else:
-                # Fallback: blank line followed immediately by a metadata key
-                if (
-                    current_lines
-                    and not current_lines[-1].strip()
-                    and any(stripped_lower.startswith(t) for t in METADATA_TRIGGERS)
-                    and "Start Date:" in "\n".join(current_lines)
-                ):
-                    block = "\n".join(current_lines).strip()
-                    if len(block) > 150 and "Start Date:" in block:
-                        blocks.append(block)
-                    current_lines = [line]
-                else:
-                    current_lines.append(line)
+                continue
 
+            # ── Secondary delimiters ──────────────────────────────────────────
+            if (stripped.startswith("\\") and "MPC" in stripped.upper()) or re.match(r"={5,}", stripped):
+                if current_lines:
+                    block = "\n".join(current_lines).strip()
+                    if "Start Date:" in block and len(block) > 50:
+                        blocks.append(block)
+                current_lines = []
+                continue
+
+            # ── Separator lines: blank, session counter, File: header ─────────
+            # Drop these entirely — do not append to current_lines.
+            if self._is_session_separator(line):
+                continue
+
+            # ── Normal content ────────────────────────────────────────────────
+            current_lines.append(line)
+
+        # Flush the last block
         if current_lines:
             block = "\n".join(current_lines).strip()
-            if len(block) > 150 and "Start Date:" in block:
+            if "Start Date:" in block and len(block) > 50:
                 blocks.append(block)
 
         return blocks
 
     def _safe_float(self, s: str) -> Optional[float]:
         """
-        Safely parse a string as float.
+        Safely parse a string to float.
         Handles integers, decimals, and scientific notation (e.g. 1.5e+03).
         Returns None on failure — never raises.
         """
@@ -97,30 +129,42 @@ class MedPCParser:
 
     def _parse_single_session(self, block: str, filename: str) -> Optional["ParsedSession"]:
         lines = block.splitlines()
-        meta = {}
-        scalars = {}
-        arrays = {}
+        meta: Dict[str, str]    = {}
+        scalars: Dict[str, float] = {}
+        arrays: Dict[str, List[float]] = {}
         i = 0
 
         # ── 1. Metadata / Header ──────────────────────────────────────────────
-        while i < len(lines) and not re.match(r"^[A-Z]:\s", lines[i].strip()):
+        # Read key: value lines until we hit the first scalar or array header.
+        # A scalar header looks like "A:  123.45" (letter, colon, space, number).
+        # An array header looks like "A:" (letter, colon, end-of-line).
+        KNOWN_META_KEYS = {
+            "Subject", "MSN", "Start Date", "End Date", "Box", "Room",
+            "Experiment", "Group", "Protocol", "Comment",
+            "Start Time", "End Time",
+        }
+        KNOWN_META_LOWER = {k.lower() for k in KNOWN_META_KEYS} | {
+            "box", "room", "cage", "experiment", "group"
+        }
+
+        while i < len(lines):
             line = lines[i].strip()
+            # Stop when we reach the scalar/array section
+            if re.match(r"^[A-Z]:\s*-?\d", line) or re.match(r"^[A-Z]:$", line):
+                break
             if ":" in line and not line.startswith("\\"):
                 key_part, val_part = line.split(":", 1)
                 key = key_part.strip()
                 val = val_part.strip()
-                known_keys = [
-                    "Subject", "MSN", "Start Date", "End Date", "Box", "Room",
-                    "Experiment", "Group", "Protocol", "File", "Comment"
-                ]
-                if key in known_keys or key.lower() in {"box", "room", "cage", "experiment", "group"}:
+                if key in KNOWN_META_KEYS or key.lower() in KNOWN_META_LOWER:
                     meta[key] = val
             i += 1
 
         # ── 2. Scalars ────────────────────────────────────────────────────────
+        # Lines of the form  "A:  123.45"  or  "I:  0"
+        # Stop at the first array header ("A:" alone on a line).
         while i < len(lines):
             line = lines[i].strip()
-            # Match lines like "A: 123.45" or "Z: 0"
             scalar_match = re.match(
                 r"^([A-Z]):\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\s*$", line
             )
@@ -129,20 +173,21 @@ class MedPCParser:
                 val = self._safe_float(scalar_match.group(2))
                 if val is not None:
                     scalars[var] = val
-            elif re.match(r"^[A-Z]:$", line) or line.startswith("\\") or re.match(r"={5,}", line):
-                break  # hit an array header or section separator
-            elif not line:
-                pass   # blank lines are fine between scalars
+            elif re.match(r"^[A-Z]:$", line):
+                break   # first array header — stop scalar parsing
+            elif line.startswith("\\") or re.match(r"={5,}", line):
+                break
+            # blank lines between scalars are fine — just skip
             i += 1
 
         # ── 3. Arrays ─────────────────────────────────────────────────────────
-        current_var = None
-        current_data = []
+        current_var: Optional[str] = None
+        current_data: List[float]  = []
 
         while i < len(lines):
             line = lines[i].strip()
 
-            # Array header: a single letter followed by colon on its own line
+            # Array header: single letter + colon on its own line, e.g. "A:"
             m = re.match(r"^([A-Z]):$", line)
             if m:
                 if current_var is not None and current_data:
@@ -151,21 +196,33 @@ class MedPCParser:
                 current_data = []
 
             elif current_var is not None and line:
-                # Strip leading row index (e.g. "     0:  " or "     5:  ")
-                clean_line = re.sub(r"^\s*\d+:\s*", "", line)
-                # Parse every whitespace-separated token as a float.
-                # Filter out negative values — -987.987 is MedPC's end-of-data
-                # sentinel written at the end of valid data in fixed-size arrays.
-                # No legitimate timestamp or count in any Lynch Lab program is
-                # negative, so filtering val < 0 safely removes the sentinel
-                # and any other artefacts without discarding real data.
-                for token in clean_line.split():
+                # ── Row-indexed data line, e.g. "     0:  1234.0  5678.0" ────
+                # Strip the leading row index (digits followed by colon).
+                # A line that is ONLY a row index with no data values produces
+                # an empty string after stripping — handled gracefully below.
+                clean = re.sub(r"^\d+:\s*", "", line)
+
+                # Safety check: if after stripping we have a lone integer with
+                # no decimal or scientific notation, it could be a session
+                # counter that slipped through — skip it.
+                # (Real data values always appear alongside other numbers on
+                # the same row-indexed line.)
+                if _SESSION_COUNTER_RE.match(clean):
+                    i += 1
+                    continue
+
+                # Parse each whitespace-separated token.
+                # Filter val < 0: the -987.987 MedPC end-of-data sentinel is
+                # the only negative value in these files; no real count or
+                # timestamp is ever negative.
+                for token in clean.split():
                     val = self._safe_float(token)
                     if val is not None and val >= 0:
                         current_data.append(val)
 
             i += 1
 
+        # Flush the last array
         if current_var is not None and current_data:
             arrays[current_var] = current_data
 
@@ -178,7 +235,7 @@ class MedPCParser:
             scalars=scalars,
             arrays=arrays,
             filename=filename,
-            raw_block=block[:600] + "..." if len(block) > 600 else block
+            raw_block=block[:600] + "..." if len(block) > 600 else block,
         )
 
     def get_skipped_report(self) -> List[Dict]:
