@@ -17,8 +17,8 @@ from plotter import (
     create_cumulative_plot, create_discrimination_plot,
     create_pr_breakpoint_plot, create_efficiency_trend,
     create_response_rate_plot, create_hourly_heatmap,
-    create_mean_sem_trajectory,
-    create_within_session_plot
+    create_mean_sem_trajectory, create_within_session_plot,
+    create_hourly_line_plot  # <--- ADDED BACK
 )
 from utils import canonicalize_id
 
@@ -237,9 +237,8 @@ if 'df_sess' in st.session_state and st.session_state.df_sess is not None and no
                             st.plotly_chart(create_mean_sem_trajectory(daily), use_container_width=True, key=f"ms_{p}_{tab_idx}")
                     with c2:
                         if _hr_ok(sub_h):
-                            st.plotly_chart(create_interactive_plot(sub_h, "hour", "infusion_events", f"Hourly Infusions — {p}", "canonical_subject", kind="line"), use_container_width=True, key=f"hi_{p}_{tab_idx}")
+                            st.plotly_chart(create_hourly_line_plot(sub_h), use_container_width=True, key=f"hi_{p}_{tab_idx}")
                             st.plotly_chart(create_hourly_heatmap(sub_h), use_container_width=True, key=f"hm_{p}_{tab_idx}")
-
         with tab_advanced:
             st.plotly_chart(create_cumulative_plot(df_sess), use_container_width=True, key="c_all")
             st.plotly_chart(create_discrimination_plot(df_sess), use_container_width=True, key="d_all")
@@ -275,8 +274,9 @@ if 'df_sess' in st.session_state and st.session_state.df_sess is not None and no
                                 if not prog_daily.empty:
                                     st.plotly_chart(create_interactive_plot(prog_daily, "session_day", "total_infusions", f"Daily Infusions — {p}", hue=None, kind="line"), use_container_width=True, key=f"p_d_{sel}_{p}_{tab_idx}")
                                 if _hr_ok(prog_hr):
-                                    st.plotly_chart(create_hourly_heatmap(prog_hr), use_container_width=True, key=f"p_h_{sel}_{p}_{tab_idx}")
-
+                                    st.plotly_chart(create_hourly_line_plot(prog_hr), use_container_width=True, key=f"p_hl_{sel}_{p}_{tab_idx}")
+                                    st.plotly_chart(create_hourly_heatmap(prog_hr), use_container_width=True, key=f"p_hm_{sel}_{p}_{tab_idx}")
+                                    
                                 if not prog_sess.empty:
                                     st.plotly_chart(create_cumulative_plot(prog_sess), use_container_width=True, key=f"p_c_{sel}_{p}_{tab_idx}")
                                     if "active_presses" in prog_sess.columns:
