@@ -411,6 +411,10 @@ if (
 
                                 if not prog_hr.empty:
                                     st.plotly_chart(
+                                        create_hourly_line_plot(prog_hr),
+                                        use_container_width=True,
+                                        key=f"hourly_line_subj_{sel}_{p}_{tab_idx}")
+                                    st.plotly_chart(
                                         create_hourly_heatmap(prog_hr),
                                         use_container_width=True,
                                         key=f"hourly_heatmap_subj_{sel}_{p}_{tab_idx}")
