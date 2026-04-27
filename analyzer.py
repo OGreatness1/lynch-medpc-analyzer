@@ -151,8 +151,19 @@ def process_sessions(
     if not df_sessions.empty:
         df_sessions = df_sessions.sort_values(["canonical_subject", "start_date"])
         df_sessions['session_day'] = df_sessions.groupby(['canonical_subject', 'program_name']).cumcount() + 1
+    if not df_sessions.empty:
+        df_sessions = df_sessions.sort_values(["canonical_subject", "start_date"])
+        df_sessions['session_day'] = df_sessions.groupby(['canonical_subject', 'program_name']).cumcount() + 1
+        
     if not df_hourly.empty:
         df_hourly = df_hourly.sort_values(["canonical_subject", "start_date", "hour"])
+        # ─── RESTORED V3 FIX: Merge session_day into hourly data for the plotter ───
+        if not df_sessions.empty and "session_day" in df_sessions.columns:
+            df_hourly = df_hourly.merge(
+                df_sessions[["canonical_subject", "start_date", "program_name", "session_day"]],
+                on=["canonical_subject", "start_date", "program_name"],
+                how="left"
+            )
 
     return df_sessions, df_hourly, found
 
