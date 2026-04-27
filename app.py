@@ -24,7 +24,8 @@ from plotter import (
     create_pr_breakpoint_plot, create_efficiency_trend,
     create_response_rate_plot, create_hourly_heatmap,
     create_hourly_line_plot, create_mean_sem_trajectory,
-    create_within_session_plot,
+    create_within_session_plot, create_cohort_discrimination_plot,
+    create_cohort_hourly_line_plot
 )
 from utils import canonicalize_id
 
@@ -335,33 +336,80 @@ if (
                     )
                     daily = create_daily_summary(sub_s)
 
+                    # Check if the specific program includes both genders for split charts
+                    has_both_genders = len(sub_s["gender"].loc[lambda x: x.isin(["Male", "Female"])].unique()) > 1
+
                     c1, c2 = st.columns(2)
                     with c1:
                         if not daily.empty:
                             st.plotly_chart(
                                 create_interactive_plot(
-                                    daily, "first_session_time", "total_infusions",
-                                    f"Daily Infusions — {p}", "canonical_subject", kind="line"),
+                                    daily, "session_day" if "session_day" in daily.columns else "first_session_time", "total_infusions",
+                                    f"Daily Infusions (Per Subject) — {p}", "canonical_subject", kind="line"),
                                 use_container_width=True,
                                 key=f"daily_inf_{p}_{tab_idx}")
                             st.plotly_chart(
                                 create_mean_sem_trajectory(daily),
                                 use_container_width=True,
                                 key=f"mean_sem_{p}_{tab_idx}")
+                            st.plotly_chart(
+                                create_cohort_discrimination_plot(sub_s),
+                                use_container_width=True,
+                                key=f"cohort_discrim_{p}_{tab_idx}")
                     with c2:
                         if not sub_h.empty:
                             st.plotly_chart(
-                                create_hourly_line_plot(sub_h, f"Avg Infusions by Hour — {p}"),
+                                create_hourly_line_plot(sub_h, f"Avg Infusions by Hour (Per Subject) — {p}"),
                                 use_container_width=True,
                                 key=f"hourly_line_{p}_{tab_idx}")
+                            st.plotly_chart(
+                                create_cohort_hourly_line_plot(sub_h),
+                                use_container_width=True,
+                                key=f"cohort_hourly_{p}_{tab_idx}")
                             st.plotly_chart(
                                 create_hourly_heatmap(sub_h),
                                 use_container_width=True,
                                 key=f"hourly_heatmap_{p}_{tab_idx}")
 
+                    # ── Gender Comparisons Panel ──
+                    if has_both_genders:
+                        st.divider()
+                        st.subheader(f"Gender Comparisons — {p}")
+                        gc1, gc2 = st.columns(2)
+                        with gc1:
+                            if not daily.empty:
+                                st.plotly_chart(
+                                    create_mean_sem_trajectory(daily, split_by_gender=True),
+                                    use_container_width=True,
+                                    key=f"mean_sem_gen_{p}_{tab_idx}")
+                            st.plotly_chart(
+                                create_cohort_discrimination_plot(sub_s, split_by_gender=True),
+                                use_container_width=True,
+                                key=f"cohort_discrim_gen_{p}_{tab_idx}")
+                        with gc2:
+                            if not sub_h.empty:
+                                st.plotly_chart(
+                                    create_cohort_hourly_line_plot(sub_h, split_by_gender=True),
+                                    use_container_width=True,
+                                    key=f"cohort_hourly_gen_{p}_{tab_idx}")
+
         with tab_advanced:
+            has_both_genders_all = len(df_sess["gender"].loc[lambda x: x.isin(["Male", "Female"])].unique()) > 1
+
             st.plotly_chart(create_cumulative_plot(df_sess),
                             use_container_width=True, key="cumulative_all")
+
+            c_adv1, c_adv2 = st.columns(2)
+            with c_adv1:
+                st.plotly_chart(create_cohort_discrimination_plot(df_sess),
+                                use_container_width=True, key="cohort_discrim_all")
+            with c_adv2:
+                if has_both_genders_all:
+                    st.plotly_chart(create_cohort_discrimination_plot(df_sess, split_by_gender=True),
+                                    use_container_width=True, key="cohort_discrim_all_gen")
+
+            st.divider()
+            st.subheader("Individual Discrimination Breakdown")
             st.plotly_chart(create_discrimination_plot(df_sess),
                             use_container_width=True, key="discrimination_all")
 
