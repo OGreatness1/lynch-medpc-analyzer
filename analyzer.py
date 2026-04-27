@@ -45,9 +45,15 @@ def get_val(session: ParsedSession, var_name: Any, default: Any = 0.0) -> float:
     except (ValueError, TypeError): return float(default)
 
 def calculate_duration(session: ParsedSession, mapping: dict) -> float:
-    if "duration_sec" in mapping: return get_val(session, mapping["duration_sec"])
-    if "duration_min" in mapping: return get_val(session, mapping["duration_min"]) * 60
-    if "duration_hour" in mapping: return get_val(session, mapping["duration_hour"]) * 3600
+    # ─── RESTORED V3 FIX: Properly pull "duration" from config ───
+    if "duration" in mapping: 
+        return get_val(session, mapping["duration"])
+    if "duration_sec" in mapping: 
+        return get_val(session, mapping["duration_sec"])
+    if "duration_min" in mapping: 
+        return get_val(session, mapping["duration_min"]) * 60
+    if "duration_hour" in mapping: 
+        return get_val(session, mapping["duration_hour"]) * 3600
     return 0.0
 
 def process_sessions(
