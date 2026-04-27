@@ -90,40 +90,12 @@ def create_interactive_plot(data, x, y, title, hue=None, kind="line",
                       yaxis_title=y.replace("_", " ").title())
     return fig
 
-def create_efficiency_trend(daily: pd.DataFrame):
-    """
-    Line plot showing Efficiency (Total Infusions / (Total Active Presses + 1))
-    across sessions.
-    """
-    if daily.empty or "total_active_presses" not in daily.columns:
-        return go.Figure().update_layout(title="Efficiency Trend — No Data")
-
-    date_col = get_date_column(daily)
-    if date_col is None:
-        return go.Figure().update_layout(title="Efficiency Trend — No Date Column")
-
-    df = daily.copy()
-    # Add 1 to the denominator to prevent division by zero
-    df["efficiency"] = df["total_infusions"] / (df["total_active_presses"] + 1)
-
-    return create_interactive_plot(
-        df, x=date_col, y="efficiency", title="Efficiency Trend (Rewards / Effort)",
-        hue="canonical_subject", kind="line"
-    )
 
 def create_hourly_line_plot(hr: pd.DataFrame, title: str = "Avg Infusions by Hour of Session"):
-    """
-    Mean infusion events per hour, correctly averaged over ALL sessions per
-    subject (including sessions where that hour had zero events).
-
-    Denominator = unique (start_date, session_day) pairs so that two sessions
-    on the same calendar date — which share the same start_date but have
-    different session_day values — are counted separately.
-    """
+    """Mean infusion events per hour (Per Subject tracking)."""
     if hr.empty or "infusion_events" not in hr.columns:
         return go.Figure().update_layout(title=f"{title} — No Data")
 
-    # Count total unique sessions per subject
     if "session_day" in hr.columns and "start_date" in hr.columns:
         n_sessions = (
             hr.groupby("canonical_subject")
@@ -131,21 +103,11 @@ def create_hourly_line_plot(hr: pd.DataFrame, title: str = "Avg Infusions by Hou
             .reset_index(name="n_sessions")
         )
     elif "start_date" in hr.columns:
-        n_sessions = (
-            hr.groupby("canonical_subject")["start_date"]
-            .nunique().reset_index(name="n_sessions")
-        )
+        n_sessions = hr.groupby("canonical_subject")["start_date"].nunique().reset_index(name="n_sessions")
     else:
-        n_sessions = (
-            hr.groupby("canonical_subject").size()
-            .reset_index(name="n_sessions")
-        )
+        n_sessions = hr.groupby("canonical_subject").size().reset_index(name="n_sessions")
 
-    sum_by_hour = (
-        hr.groupby(["canonical_subject", "hour"])["infusion_events"]
-        .sum().reset_index(name="total_infusion_events")
-    )
-
+    sum_by_hour = hr.groupby(["canonical_subject", "hour"])["infusion_events"].sum().reset_index(name="total_infusion_events")
     agg = sum_by_hour.merge(n_sessions, on="canonical_subject", how="left")
     agg["avg_infusion_events"] = agg["total_infusion_events"] / agg["n_sessions"]
     agg = agg.sort_values(["canonical_subject", "hour"])
@@ -162,45 +124,75 @@ def create_hourly_line_plot(hr: pd.DataFrame, title: str = "Avg Infusions by Hou
     return fig
 
 
+def create_cohort_hourly_line_plot(hr: pd.DataFrame, split_by_gender: bool = False):
+    """Cohort average of infusions per hour (Mean ± SEM)."""
+    if hr.empty or "infusion_events" not in hr.columns:
+        return go.Figure().update_layout(title="Cohort Hourly Averages — No Data")
+
+    date_col = get_date_column(hr) or "start_date"
+    if "session_day" in hr.columns and "start_date" in hr.columns:
+        n_sess = hr.groupby(["canonical_subject", "gender"]).apply(lambda x: x[["start_date", "session_day"]].drop_duplicates().shape[0]).reset_index(name="n_sessions")
+    else:
+        n_sess = hr.groupby(["canonical_subject", "gender"])[date_col].nunique().reset_index(name="n_sessions")
+
+    subj_hr = hr.groupby(["canonical_subject", "gender", "hour"])["infusion_events"].sum().reset_index(name="total_inf")
+    subj_hr = subj_hr.merge(n_sess, on=["canonical_subject", "gender"])
+    subj_hr["subj_avg"] = subj_hr["total_inf"] / subj_hr["n_sessions"]
+
+    grp_cols = ["hour"]
+    if split_by_gender and "gender" in subj_hr.columns:
+        grp_cols.append("gender")
+
+    cohort_hr = subj_hr.groupby(grp_cols)["subj_avg"].agg(["mean", "sem"]).reset_index()
+    cohort_hr["sem"] = cohort_hr["sem"].fillna(0)
+
+    fig = go.Figure()
+
+    if split_by_gender and "gender" in cohort_hr.columns:
+        colors = {"Male": "rgb(31, 119, 180)", "Female": "rgb(227, 119, 194)", "Unknown": "rgb(127, 127, 127)"}
+        for g, grp in cohort_hr.groupby("gender"):
+            c = colors.get(g, "rgb(100,100,100)")
+            c_rgba = c.replace("rgb", "rgba").replace(")", ", 0.2)")
+            x, y, sem = grp["hour"], grp["mean"], grp["sem"]
+            fig.add_trace(go.Scatter(name=f"{g} Mean", x=x, y=y, customdata=sem, mode="lines+markers", line=dict(color=c), hovertemplate="Hour: %{x}<br>Avg: %{y:.2f} ± %{customdata:.2f}"))
+            fig.add_trace(go.Scatter(name=f"{g} Upper", x=x, y=y + sem, mode="lines", line=dict(width=0), showlegend=False, hoverinfo="skip"))
+            fig.add_trace(go.Scatter(name=f"{g} Lower", x=x, y=y - sem, mode="lines", line=dict(width=0), fillcolor=c_rgba, fill="tonexty", showlegend=False, hoverinfo="skip"))
+        title_text = "Cohort Hourly Average by Gender (Mean ± SEM)"
+    else:
+        x, y, sem = cohort_hr["hour"], cohort_hr["mean"], cohort_hr["sem"]
+        c = "rgb(31, 119, 180)"
+        c_rgba = "rgba(31, 119, 180, 0.2)"
+        fig.add_trace(go.Scatter(name="Cohort Mean", x=x, y=y, customdata=sem, mode="lines+markers", line=dict(color=c), hovertemplate="Hour: %{x}<br>Avg: %{y:.2f} ± %{customdata:.2f}"))
+        fig.add_trace(go.Scatter(name="Upper Bound", x=x, y=y + sem, mode="lines", line=dict(width=0), showlegend=False, hoverinfo="skip"))
+        fig.add_trace(go.Scatter(name="Lower Bound", x=x, y=y - sem, mode="lines", line=dict(width=0), fillcolor=c_rgba, fill="tonexty", showlegend=False, hoverinfo="skip"))
+        title_text = "Cohort Average Infusions by Hour"
+
+    fig.update_layout(title=title_text, xaxis_title="Hour of Session", yaxis_title="Average Infusions",
+                      template="plotly_white", hovermode="x unified", xaxis=dict(dtick=1),
+                      legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+    return fig
+
+
 def create_hourly_heatmap(hr: pd.DataFrame):
-    """
-    Heatmap showing AVERAGE infusion events per hour per subject across
-    all sessions.  Matches the denominator used in create_hourly_line_plot
-    so both charts are directly comparable.
-    """
+    """Heatmap showing AVERAGE infusion events per hour per subject."""
     if hr.empty or "infusion_events" not in hr.columns:
         return go.Figure().update_layout(title="Hourly Infusion Heatmap — No Data")
 
-    # Same session-count denominator as the line plot
     if "session_day" in hr.columns and "start_date" in hr.columns:
-        n_sessions = (
-            hr.groupby("canonical_subject")
-            .apply(lambda x: x[["start_date", "session_day"]].drop_duplicates().shape[0])
-            .reset_index(name="n_sessions")
-        )
+        n_sessions = hr.groupby("canonical_subject").apply(lambda x: x[["start_date", "session_day"]].drop_duplicates().shape[0]).reset_index(name="n_sessions")
     elif "start_date" in hr.columns:
-        n_sessions = (
-            hr.groupby("canonical_subject")["start_date"]
-            .nunique().reset_index(name="n_sessions")
-        )
+        n_sessions = hr.groupby("canonical_subject")["start_date"].nunique().reset_index(name="n_sessions")
     else:
-        n_sessions = (
-            hr.groupby("canonical_subject").size()
-            .reset_index(name="n_sessions")
-        )
+        n_sessions = hr.groupby("canonical_subject").size().reset_index(name="n_sessions")
 
-    sum_pivot = (
-        hr.groupby(["canonical_subject", "hour"])["infusion_events"]
-        .sum().unstack(fill_value=0)
-    )
+    sum_pivot = hr.groupby(["canonical_subject", "hour"])["infusion_events"].sum().unstack(fill_value=0)
     n_map = n_sessions.set_index("canonical_subject")["n_sessions"]
     avg_pivot = sum_pivot.div(n_map, axis=0)
 
     fig = px.imshow(avg_pivot,
                     title="Avg Hourly Infusions per Session",
                     aspect="auto", color_continuous_scale="Blues",
-                    labels=dict(x="Hour of Session", y="Subject",
-                                color="Avg Infusions / Session"))
+                    labels=dict(x="Hour of Session", y="Subject", color="Avg Infusions / Session"))
     fig.update_layout(template="plotly_white", height=500)
     return fig
 
@@ -230,7 +222,51 @@ def create_cumulative_plot(sess: pd.DataFrame):
     return fig
 
 
+def create_cohort_discrimination_plot(sess: pd.DataFrame, split_by_gender: bool = False):
+    """Cohort average discrimination plot (Mean ± SEM) per session."""
+    if sess.empty or "active_presses" not in sess.columns:
+        return go.Figure().update_layout(title="Cohort Discrimination — No Data")
+    date_col = get_date_column(sess)
+    if date_col is None:
+        return go.Figure().update_layout(title="Cohort Discrimination — No Date Column")
+
+    grp_cols = [date_col]
+    if split_by_gender and "gender" in sess.columns:
+        grp_cols.append("gender")
+
+    df_melt = sess.melt(id_vars=grp_cols + ["canonical_subject"],
+                        value_vars=["active_presses", "inactive_presses"],
+                        var_name="Lever", value_name="Presses")
+    df_melt["Lever"] = df_melt["Lever"].str.replace("_presses", "").str.title()
+
+    agg = df_melt.groupby(grp_cols + ["Lever"])["Presses"].agg(["mean", "sem"]).reset_index()
+    agg["sem"] = agg["sem"].fillna(0)
+
+    is_int = _is_integer_day_column(sess, date_col)
+    if not is_int:
+        agg[date_col] = pd.to_datetime(agg[date_col]).dt.strftime("%Y-%m-%d")
+
+    if split_by_gender and "gender" in agg.columns:
+        fig = px.bar(agg, x=date_col, y="mean", color="Lever", facet_row="gender",
+                     barmode="group", error_y="sem",
+                     title="Average Discrimination by Gender",
+                     color_discrete_sequence=LYNCH_COLORS)
+    else:
+        fig = px.bar(agg, x=date_col, y="mean", color="Lever",
+                     barmode="group", error_y="sem",
+                     title="Cohort Average Discrimination (Mean ± SEM)",
+                     color_discrete_sequence=LYNCH_COLORS)
+
+    fig.update_layout(template="plotly_white", height=600 if split_by_gender else 400,
+                      xaxis_title="Session Day" if is_int else "Date",
+                      yaxis_title="Average Presses")
+    # Remove the "gender=" prefix from plotly facets
+    fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
+    return fig
+
+
 def create_discrimination_plot(sess: pd.DataFrame):
+    """Faceted Individual subject discrimination plot."""
     if sess.empty or "active_presses" not in sess.columns:
         return go.Figure().update_layout(title="Active vs Inactive Discrimination — No Data")
     date_col = get_date_column(sess)
@@ -242,7 +278,7 @@ def create_discrimination_plot(sess: pd.DataFrame):
     df_melt["Lever"] = df_melt["Lever"].str.replace("_presses", "").str.title()
     fig = px.bar(df_melt, x=date_col, y="Presses", color="Lever",
                  barmode="group", facet_col="canonical_subject", facet_col_wrap=3,
-                 title="Lever Discrimination per Session")
+                 title="Individual Lever Discrimination per Session")
     fig.update_layout(template="plotly_white", height=600)
     return fig
 
@@ -271,6 +307,21 @@ def create_response_rate_plot(sess: pd.DataFrame):
                                    hue="canonical_subject", kind="line")
 
 
+def create_efficiency_trend(daily: pd.DataFrame):
+    """Line plot showing Efficiency (Total Infusions / (Total Active Presses + 1))."""
+    if daily.empty or "total_active_presses" not in daily.columns:
+        return go.Figure().update_layout(title="Efficiency Trend — No Data")
+    date_col = get_date_column(daily)
+    if date_col is None:
+        return go.Figure().update_layout(title="Efficiency Trend — No Date Column")
+    df = daily.copy()
+    df["efficiency"] = df["total_infusions"] / (df["total_active_presses"] + 1)
+    return create_interactive_plot(
+        df, x=date_col, y="efficiency", title="Efficiency Trend (Rewards / Effort)",
+        hue="canonical_subject", kind="line"
+    )
+
+
 def create_within_session_plot(active_timestamps, duration=None):
     """Cumulative step-plot of active/infusion responses within one session."""
     import numpy as np
@@ -292,16 +343,20 @@ def create_within_session_plot(active_timestamps, duration=None):
     return fig
 
 
-def create_mean_sem_trajectory(daily: pd.DataFrame):
-    """Cohort average trajectory (Mean ± SEM) with shaded error band."""
+def create_mean_sem_trajectory(daily: pd.DataFrame, split_by_gender: bool = False):
+    """Cohort average trajectory (Mean ± SEM) with optional gender splitting."""
     if daily.empty or "total_infusions" not in daily.columns:
         return go.Figure().update_layout(title="No data — Cohort Average Trajectory")
     date_col = get_date_column(daily)
     if date_col is None:
         return go.Figure().update_layout(title="Cohort Average Trajectory — No Date Column")
 
+    grp_cols = [date_col]
+    if split_by_gender and "gender" in daily.columns:
+        grp_cols.append("gender")
+
     mean_df = (
-        daily.groupby(date_col)["total_infusions"]
+        daily.groupby(grp_cols)["total_infusions"]
         .agg(["mean", "sem"]).reset_index()
         .rename(columns={date_col: "x_val"})
     )
@@ -311,36 +366,41 @@ def create_mean_sem_trajectory(daily: pd.DataFrame):
     if use_dates:
         mean_df["x_val"] = pd.to_datetime(mean_df["x_val"], errors="coerce")
         mean_df = mean_df.dropna(subset=["x_val"])
-        hover_tmpl = "Date: %{x|%Y-%m-%d}<br>Mean Infusions: %{y:.2f}<extra></extra>"
+        hover_tmpl = "Date: %{x|%Y-%m-%d}<br>Mean: %{y:.2f} ± %{customdata:.2f}<extra></extra>"
         x_label, tick_fmt = "Date", "%Y-%m-%d"
     else:
         mean_df["x_val"] = mean_df["x_val"].astype(int)
-        hover_tmpl = "Session Day: %{x}<br>Mean Infusions: %{y:.2f}<extra></extra>"
+        hover_tmpl = "Session Day: %{x}<br>Mean: %{y:.2f} ± %{customdata:.2f}<extra></extra>"
         x_label, tick_fmt = "Session Day", None
 
     if mean_df.empty:
         return go.Figure().update_layout(title="Cohort Average Trajectory — No Valid Data")
 
-    x, y = mean_df["x_val"], mean_df["mean"]
-    fig = go.Figure([
-        go.Scatter(name="Cohort Mean", x=x, y=y,
-                   mode="lines+markers",
-                   line=dict(color="rgb(31, 119, 180)"), marker=dict(size=8),
-                   hovertemplate=hover_tmpl),
-        go.Scatter(name="Upper Bound", x=x, y=y + mean_df["sem"],
-                   mode="lines", line=dict(width=0),
-                   showlegend=False, hoverinfo="skip"),
-        go.Scatter(name="Lower Bound", x=x, y=y - mean_df["sem"],
-                   mode="lines", line=dict(width=0),
-                   fillcolor="rgba(31, 119, 180, 0.2)", fill="tonexty",
-                   showlegend=False, hoverinfo="skip"),
-    ])
+    fig = go.Figure()
+
+    if split_by_gender and "gender" in mean_df.columns:
+        colors = {"Male": "rgb(31, 119, 180)", "Female": "rgb(227, 119, 194)", "Unknown": "rgb(127, 127, 127)"}
+        for g, grp in mean_df.groupby("gender"):
+            c = colors.get(g, "rgb(100,100,100)")
+            c_rgba = c.replace("rgb", "rgba").replace(")", ", 0.2)")
+            x, y, sem = grp["x_val"], grp["mean"], grp["sem"]
+            fig.add_trace(go.Scatter(name=f"{g} Mean", x=x, y=y, customdata=sem, mode="lines+markers", line=dict(color=c), hovertemplate=hover_tmpl))
+            fig.add_trace(go.Scatter(name=f"{g} Upper", x=x, y=y + sem, mode="lines", line=dict(width=0), showlegend=False, hoverinfo="skip"))
+            fig.add_trace(go.Scatter(name=f"{g} Lower", x=x, y=y - sem, mode="lines", line=dict(width=0), fillcolor=c_rgba, fill="tonexty", showlegend=False, hoverinfo="skip"))
+        title_text = "Cohort Trajectory by Gender (Mean ± SEM)"
+    else:
+        x, y, sem = mean_df["x_val"], mean_df["mean"], mean_df["sem"]
+        c = "rgb(31, 119, 180)"
+        c_rgba = "rgba(31, 119, 180, 0.2)"
+        fig.add_trace(go.Scatter(name="Cohort Mean", x=x, y=y, customdata=sem, mode="lines+markers", line=dict(color=c), hovertemplate=hover_tmpl))
+        fig.add_trace(go.Scatter(name="Upper Bound", x=x, y=y + sem, mode="lines", line=dict(width=0), showlegend=False, hoverinfo="skip"))
+        fig.add_trace(go.Scatter(name="Lower Bound", x=x, y=y - sem, mode="lines", line=dict(width=0), fillcolor=c_rgba, fill="tonexty", showlegend=False, hoverinfo="skip"))
+        title_text = "Cohort Average Trajectory (Mean ± SEM)"
+
     xaxis_cfg = dict(tickangle=45, rangeslider_visible=True)
     if tick_fmt:
         xaxis_cfg["tickformat"] = tick_fmt
-    fig.update_layout(title="Cohort Average Trajectory (Mean ± SEM)",
-                      xaxis_title=x_label, yaxis_title="Infusions (Mean ± SEM)",
-                      template="plotly_white", hovermode="x unified",
-                      xaxis=xaxis_cfg, showlegend=True,
+    fig.update_layout(title=title_text, xaxis_title=x_label, yaxis_title="Infusions (Mean ± SEM)",
+                      template="plotly_white", hovermode="x unified", xaxis=xaxis_cfg,
                       legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
     return fig
