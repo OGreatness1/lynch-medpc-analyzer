@@ -136,23 +136,65 @@ def calculate_duration(session: ParsedSession, mapping: dict) -> float:
     """
     Extract session duration in seconds.
 
-    Checks mapping keys in this order:
-      "duration"      → MedPC variable letter (e.g. "Z"), value in seconds
-      "duration_sec"  → explicit seconds key
-      "duration_min"  → minutes converted to seconds
-      "duration_hour" → hours converted to seconds
-
-    NOTE: all current rat and mouse mappings use "duration": "Z".
-    The _sec/_min/_hour variants are kept for custom/legacy mappings.
+    Resolution order:
+    1. mapping["duration"] scalar letter — BUT if the letter is "Z", Z is a
+       clock array [Hr, Min, Sec], NOT elapsed time.  For "Z" we skip the
+       scalar lookup and fall through to metadata.
+       For "S" (intermittent access elapsed time) this works correctly.
+    2. mapping["duration_sec"] / ["duration_min"] / ["duration_hour"] —
+       legacy explicit-unit keys.
+    3. Start Time / End Time metadata — computed from the session header.
+       Handles overnight sessions (end < start → add 86400).
+    4. Returns 0.0 if nothing is available.
     """
-    if "duration" in mapping and mapping["duration"] is not None:
-        return get_val(session, mapping["duration"])
+    dur_key = mapping.get("duration")
+
+    # "S" = elapsed session seconds in intermittent access — read directly
+    if dur_key and dur_key not in (None, "Z"):
+        val = get_val(session, dur_key)
+        if val > 0:
+            return val
+
+    # Explicit unit keys (custom/legacy mappings)
     if "duration_sec" in mapping:
-        return get_val(session, mapping["duration_sec"])
+        val = get_val(session, mapping["duration_sec"])
+        if val > 0:
+            return val
     if "duration_min" in mapping:
-        return get_val(session, mapping["duration_min"]) * 60
+        val = get_val(session, mapping["duration_min"]) * 60
+        if val > 0:
+            return val
     if "duration_hour" in mapping:
-        return get_val(session, mapping["duration_hour"]) * 3600
+        val = get_val(session, mapping["duration_hour"]) * 3600
+        if val > 0:
+            return val
+
+    # Fall back: compute from Start Time / End Time in session metadata.
+    # These are stored as "HH:MM:SS" strings.
+    def _parse_hms(s: str) -> Optional[float]:
+        """Convert HH:MM:SS to total seconds since midnight."""
+        if not s:
+            return None
+        parts = str(s).strip().split(":")
+        try:
+            if len(parts) == 3:
+                return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+            elif len(parts) == 2:
+                return int(parts[0]) * 3600 + int(parts[1]) * 60
+        except (ValueError, IndexError):
+            return None
+        return None
+
+    start_s = _parse_hms(session.meta.get("Start Time", ""))
+    end_s   = _parse_hms(session.meta.get("End Time", ""))
+
+    if start_s is not None and end_s is not None:
+        diff = end_s - start_s
+        if diff < 0:
+            diff += 86400  # overnight session
+        if diff > 0:
+            return diff
+
     return 0.0
 
 
