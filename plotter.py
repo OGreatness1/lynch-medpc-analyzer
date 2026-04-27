@@ -106,6 +106,36 @@ def create_interactive_plot(data, x, y, title, hue=None, kind="line", color_disc
 # ────────────────────────────────────────────────
 # Specialized plots
 # ────────────────────────────────────────────────
+def create_hourly_line_plot(hr: pd.DataFrame):
+    """V3 FIX: Calculates average hourly infusions per subject using session_day to prevent NaT dropouts."""
+    if hr.empty or "infusion_events" not in hr.columns:
+        return go.Figure().update_layout(title="Hourly Infusion Averages - No Data")
+        
+    date_col = get_date_column(hr)
+    if not date_col:
+        date_col = "start_date"
+        
+    # Aggregate to find the average per hour across all available sessions
+    grp = hr.groupby(["canonical_subject", "hour"]).agg(
+        total_infusions=("infusion_events", "sum"),
+        session_count=(date_col, "nunique")  # Uses session_day (no NaT) per V3 spec
+    ).reset_index()
+    
+    # Protect against division by zero
+    grp["session_count"] = grp["session_count"].replace(0, 1)
+    grp["avg_infusions"] = grp["total_infusions"] / grp["session_count"]
+    
+    fig = px.line(
+        grp, x="hour", y="avg_infusions", color="canonical_subject",
+        title="Average Infusions per Hour", markers=True,
+        color_discrete_sequence=LYNCH_COLORS
+    )
+    fig.update_layout(
+        template="plotly_white",
+        xaxis_title="Hour of Session",
+        yaxis_title="Average Infusions (across sessions)"
+    )
+    return fig
 
 def create_efficiency_trend(daily: pd.DataFrame):
     if daily.empty or "total_active_presses" not in daily.columns:
