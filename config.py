@@ -103,10 +103,12 @@ map_rat_fent = {
 
 map_rat_int = {
     # Intermittent access — all variants (NEW, 3NEW, 4NEW, original) identical
+    # S = elapsed session time in seconds (confirmed from data: S: 85801.000)
+    # Z = clock array [Hr, Min, Sec] — not elapsed time, use S instead
     "infusions":           "I",
-    "active_presses":      "R",   # LLEVER
-    "inactive_presses":    "U",   # RLEVER
-    "duration":            "Z",
+    "active_presses":      "R",   # LLEVER (drug lever)
+    "inactive_presses":    "U",   # RLEVER (inactive lever)
+    "duration":            "S",   # elapsed session seconds  ← Z was wrong (clock, not duration)
     "infusion_timestamps": "O",   # S.S.15: O(V)=S at each infusion
     "active_timestamps":   "O",
     "W_value":             "W",   # pump turn time
@@ -163,20 +165,18 @@ map_rat_cue = {
 }
 
 map_rat_food = {
-    # FRFOODTRAIN_ESD (magazine training):
-    # A = lever 1 (active/left) presses
-    # B = lever 2 (inactive/right) presses
-    # R = food reinforcer count
-    # E = magazine entries
-    # DT4 / NewFRFoodTrain variants use same layout
+    # FRFOODTRAIN_ESD / NEW FRFOOD TRAIN:
+    # The program only increments R on each reinforced press (ADD R after lever press).
+    # A and B are declared but never incremented in this program.
+    # So R = lever 1 presses = food reinforcers (they are the same in FR1 mag training).
+    # Z = clock array [Hr,Min,Sec] — not elapsed duration; duration from metadata.
     "infusions":        None,
-    "active_presses":   "A",    # lever 1 presses  ← was R, WRONG for this template
-    "inactive_presses": "B",    # lever 2 presses  ← was M, WRONG
-    "reinforcers":      "R",    # food reinforcer count
-    "magazine_entries": "E",
-    "duration":         "Z",
+    "active_presses":   "R",    # reinforced lever 1 presses (= pellets delivered)
+    "inactive_presses": None,   # lever 2 never incremented in this program
+    "reinforcers":      "R",    # same as active_presses
+    "duration":         "Z",    # will fall back to metadata time diff
     "W_value":          "W",
-    "T_value":          "Q",
+    "T_value":          "M",    # minutes elapsed
 }
 
 map_flush = {
@@ -396,13 +396,31 @@ DEFAULT_MSN_PATTERNS: Dict[str, List[str]] = {
         "g136areinstate",
     ],
 
-    "RAT - CUE RELAPSE 7HR": [
+    # CUE RELAPSE — split by box set so cohorts can be filtered separately in
+    # the dashboard.  All variants share identical variable layout → map_rat_cue.
+    # G138A and G138B are different physical box sets from G136/G140 but run
+    # the same .MPC program with the same variables.
+    "RAT - CUE RELAPSE G138A": [
         "g138acuerelapse7hrpreathold",
+        "g138acuerelapse7hrpretxhold",
+        "g138acuerelapsenohold2025",
+        "g138acuerelapse",
         "g138a",
+    ],
+
+    "RAT - CUE RELAPSE G138B": [
+        "g138bcuerelapse7hrpretxhold",
+        "g138bcuerelapse7hrpreathold",
+        "g138bcuerelapsenohold2025",
+        "g138bcuerelapse",
+        "g138b",
+    ],
+
+    "RAT - CUE RELAPSE 7HR": [
         "g136acuerelapse",
+        "g136bcuerelapse",
         "g140acuerelapse7hr",
         "cuerelapse",
-        "g138acuerelapsenohold2025",
         "g140a cue relapse 7hr pretx hold",
         "copy of g140a cue relapse",
         "relapse esd",
@@ -447,6 +465,8 @@ DEFAULT_VARIABLE_MAPPINGS: Dict[str, Dict[str, Any]] = {
     "RAT - PR FENTANYL":                    map_rat_pr,
     "RAT - EXTINCTION":                     map_rat_ext,
     "RAT - REINSTATEMENT":                  map_rat_reinstatement,
+    "RAT - CUE RELAPSE G138A":              map_rat_cue,
+    "RAT - CUE RELAPSE G138B":              map_rat_cue,
     "RAT - CUE RELAPSE 7HR":                map_rat_cue,
     "RAT - CUE RELAPSE 2HR":                map_rat_cue,
     "RAT - DISCRETE TRIAL":                 map_rat_fr,
