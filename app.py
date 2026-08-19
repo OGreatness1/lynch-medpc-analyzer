@@ -17,6 +17,7 @@ from parser import MedPCParser
 from analyzer import (
     process_sessions, generate_pattern_flags,
     create_daily_summary, report_missing_and_box_room,
+    create_segment_summary,
 )
 from plotter import (
     create_plot, create_interactive_plot,
@@ -25,7 +26,7 @@ from plotter import (
     create_response_rate_plot, create_hourly_heatmap,
     create_hourly_line_plot, create_mean_sem_trajectory,
     create_within_session_plot, create_cohort_discrimination_plot,
-    create_cohort_hourly_line_plot
+    create_cohort_hourly_line_plot, create_segment_plot
 )
 from utils import canonicalize_id
 
@@ -56,6 +57,8 @@ if "df_sess" not in st.session_state:
     st.session_state.update({
         "df_sess":        None,
         "df_hr":          None,
+        "df_seg":         None,
+        "df_unmapped":    None,
         "found_ids":      None,
         "skipped_report": None,
         "analysis_run":   False,
@@ -141,7 +144,7 @@ if st.button("🚀 Run Analysis", type="primary"):
 
         status.text("Running behavioral analysis…")
 
-        df_sess, df_hr, found_ids = process_sessions(
+        df_sess, df_hr, found_ids, df_seg, df_unmapped = process_sessions(
             all_sessions, allowed_ids=allowed_canon or None,
             custom_patterns=custom_patterns, custom_mappings=custom_mappings,
             drug_type=drug_type, avg_weight_g=avg_weight_g, conc_mgml=conc_mgml,
@@ -153,6 +156,8 @@ if st.button("🚀 Run Analysis", type="primary"):
             df_sess = df_sess[mask].copy()
             if _hr_ok(df_hr):
                 df_hr = df_hr[df_hr["canonical_subject"].isin(df_sess["canonical_subject"])].copy()
+            if _hr_ok(df_seg):
+                df_seg = df_seg[df_seg["canonical_subject"].isin(df_sess["canonical_subject"])].copy()
 
         df_sess = generate_pattern_flags(
             df_sess, min_active=min_active_presses, max_inactive_ratio=max_inactive_ratio,
@@ -160,7 +165,8 @@ if st.button("🚀 Run Analysis", type="primary"):
         )
 
         st.session_state.update({
-            "df_sess": df_sess, "df_hr": df_hr, "found_ids": found_ids,
+            "df_sess": df_sess, "df_hr": df_hr, "df_seg": df_seg,
+            "df_unmapped": df_unmapped, "found_ids": found_ids,
             "skipped_report": parser.get_skipped_report(), "allowed_canon": allowed_canon, "analysis_run": True,
         })
         st.balloons()
@@ -168,7 +174,9 @@ if st.button("🚀 Run Analysis", type="primary"):
 
 if ("df_sess" in st.session_state and st.session_state.df_sess is not None and not st.session_state.df_sess.empty):
     df_sess   = st.session_state.df_sess
-    df_hr     = st.session_state.df_hr        
+    df_hr     = st.session_state.df_hr
+    df_seg    = st.session_state.get("df_seg")
+    df_unmap  = st.session_state.get("df_unmapped")
     found_ids = st.session_state.found_ids or set()
     skipped   = st.session_state.skipped_report or []
 
@@ -179,10 +187,23 @@ if ("df_sess" in st.session_state and st.session_state.df_sess is not None and n
         expected_ids = st.session_state.get("allowed_canon") or set()
         report_missing_and_box_room(expected_ids, found_ids, df_sess)
 
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Unique Subjects", len(found_ids))
-        col2.metric("Total Sessions",  len(df_sess))
-        col3.metric("Skipped Files",   len(skipped), delta_color="inverse")
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Unique Subjects",  len(found_ids))
+        col2.metric("Total Sessions",   len(df_sess))
+        col3.metric("Skipped Blocks",   len(skipped), delta_color="inverse")
+        col4.metric("Unrecognised MSN",
+                    0 if df_unmap is None or df_unmap.empty else len(df_unmap),
+                    delta_color="inverse")
+
+        # Sessions whose MSN matched no pattern are NOT analysed. v6.3 fell back
+        # to the FR20 mapping and labelled them "UNMAPPED", which produced
+        # plausible-looking numbers read out of the wrong variables.
+        if df_unmap is not None and not df_unmap.empty:
+            st.error(
+                f"{len(df_unmap)} session(s) were not analysed — no MSN pattern matched. "
+                "Add the MSN to DEFAULT_MSN_PATTERNS in config.py, then re-run."
+            )
+            st.dataframe(df_unmap.groupby("raw_msn").size().reset_index(name="sessions"))
 
         if show_debug and skipped:
             st.subheader("Skipped Sessions Log")
@@ -195,16 +216,28 @@ if ("df_sess" in st.session_state and st.session_state.df_sess is not None and n
                 pd.DataFrame(skipped).to_excel(skip_buf, index=False, engine="openpyxl")
                 zf.writestr("00_Skipped_Sessions_Log.xlsx", skip_buf.getvalue())
 
+            if df_unmap is not None and not df_unmap.empty:
+                unm_buf = io.BytesIO()
+                df_unmap.to_excel(unm_buf, index=False, engine="openpyxl")
+                zf.writestr("00_Unrecognized_MSNs.xlsx", unm_buf.getvalue())
+
             for prog in df_sess["program_name"].unique():
                 safe  = re.sub(r"[^A-Za-z0-9_]", "_", prog)
                 sub_s = df_sess[df_sess["program_name"] == prog]
                 sub_h = df_hr[df_hr["program_name"] == prog].copy() if _hr_ok(df_hr) else pd.DataFrame()
                 daily = create_daily_summary(sub_s)
 
+                sub_g = (df_seg[df_seg["program_name"] == prog].copy()
+                         if _hr_ok(df_seg) else pd.DataFrame())
+
                 excel_buf = io.BytesIO()
                 with pd.ExcelWriter(excel_buf, engine="openpyxl") as w:
                     sub_s.to_excel(w, sheet_name="Sessions", index=False)
                     if not sub_h.empty: sub_h.to_excel(w, sheet_name="Hourly", index=False)
+                    # One row per extinction session / relapse segment.
+                    if not sub_g.empty:
+                        sub_g.to_excel(w, sheet_name="Segments", index=False)
+                        create_segment_summary(sub_g).to_excel(w, sheet_name="Segment_Summary", index=False)
                     if not daily.empty: daily.to_excel(w, sheet_name="Daily", index=False)
                     generate_pattern_flags(sub_s).to_excel(w, sheet_name="Flags", index=False)
                 zf.writestr(f"{safe}_Full_Analysis.xlsx", excel_buf.getvalue())
@@ -264,6 +297,22 @@ if ("df_sess" in st.session_state and st.session_state.df_sess is not None and n
                         if not sub_h.empty:
                             st.plotly_chart(create_hourly_line_plot(sub_h, f"Avg Infusions by Hour (Per Subject) — {p}"), use_container_width=True, key=f"hourly_line_{p}_{tab_idx}")
                             st.plotly_chart(create_hourly_heatmap(sub_h), use_container_width=True, key=f"hourly_heatmap_{p}_{tab_idx}")
+
+                    # ─── EVERY TEST SESSION (extinction / relapse segments) ───
+                    sub_g = (df_seg[df_seg["program_name"] == p].copy()
+                             if _hr_ok(df_seg) else pd.DataFrame())
+                    if not sub_g.empty:
+                        st.divider()
+                        st.subheader(f"Every test session — {p}")
+                        st.caption(
+                            "An extinction record holds up to nine hourly extinction "
+                            "sessions plus a reinstatement test; a cue-relapse record "
+                            "holds four hourly segments. Each is reported as its own "
+                            "row instead of one 24 h total."
+                        )
+                        st.plotly_chart(create_segment_plot(sub_g), use_container_width=True,
+                                        key=f"segments_{p}_{tab_idx}")
+                        st.dataframe(create_segment_summary(sub_g))
 
                     # ─── DISCRIMINATION FRONT AND CENTER ───
                     st.divider()

@@ -326,3 +326,59 @@ def create_mean_sem_trajectory(daily: pd.DataFrame, split_by_gender: bool = Fals
         xaxis_cfg["tickformat"] = tick_fmt
     fig.update_layout(title=title_text, xaxis_title=x_label, yaxis_title="Infusions (Mean ± SEM)", template="plotly_white", hovermode="x unified", xaxis=xaxis_cfg, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
     return fig
+
+
+def create_segment_plot(seg: pd.DataFrame, split_by_gender: bool = False):
+    """
+    Mean ± SEM responses per test session / relapse segment.
+
+    An extinction record packs up to nine hourly extinction sessions plus a
+    terminal reinstatement test into one MedPC block; a cue-relapse record
+    packs four hourly segments.  Summarising the record with a single total
+    hides the within-record time course, which is the whole point of these
+    designs.  analyzer.build_segments unpacks them and this plots the result.
+
+    x = segment index (1..9 for extinction, 1..4 for relapse), one trace per
+    lever, faceted by segment_type so the reinstatement test is not drawn on
+    the same axis as the extinction sessions.
+    """
+    if seg is None or seg.empty or "segment_index" not in seg.columns:
+        return go.Figure().update_layout(title="Per-session breakdown — No Data")
+
+    value_vars = [c for c in ("active_responses", "inactive_responses", "cue_deliveries")
+                  if c in seg.columns and seg[c].notna().any()]
+    if not value_vars:
+        return go.Figure().update_layout(title="Per-session breakdown — No Data")
+
+    id_vars = ["segment_type", "segment_index", "segment_label", "canonical_subject"]
+    if split_by_gender and "gender" in seg.columns:
+        id_vars.append("gender")
+    id_vars = [c for c in id_vars if c in seg.columns]
+
+    melt = seg.melt(id_vars=id_vars, value_vars=value_vars,
+                    var_name="Measure", value_name="Responses").dropna(subset=["Responses"])
+    melt["Measure"] = (melt["Measure"].str.replace("_responses", "", regex=False)
+                                      .str.replace("_", " ").str.title())
+
+    grp = ["segment_type", "segment_index", "segment_label", "Measure"]
+    if split_by_gender and "gender" in melt.columns:
+        grp.append("gender")
+
+    agg = melt.groupby(grp)["Responses"].agg(["mean", "sem", "size"]).reset_index()
+    agg["sem"] = agg["sem"].fillna(0)
+    agg = agg.sort_values(["segment_type", "segment_index"])
+
+    fig = px.bar(
+        agg, x="segment_label", y="mean", color="Measure", barmode="group",
+        error_y="sem",
+        facet_col="segment_type" if agg["segment_type"].nunique() > 1 else None,
+        facet_row="gender" if (split_by_gender and "gender" in agg.columns) else None,
+        hover_data={"size": True, "sem": ":.2f"},
+        title="Responses per Test Session (Mean ± SEM)",
+        color_discrete_sequence=LYNCH_COLORS,
+    )
+    fig.update_layout(template="plotly_white", height=480,
+                      xaxis_title="Test session / segment", yaxis_title="Responses (Mean ± SEM)")
+    fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1].replace("_", " ").title()))
+    fig.update_xaxes(matches=None)
+    return fig
