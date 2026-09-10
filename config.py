@@ -71,6 +71,8 @@ from utils import normalize_msn
 # on trust.  Confirm them before publishing mouse data.
 # ============================================================================
 
+CONFIG_VERSION = "7.2"
+
 METADATA_KEYS = [
     "start date", "end date", "subject", "msn", "experiment", "group",
     "box", "start time", "end time", "time unit", "room", "cage"
