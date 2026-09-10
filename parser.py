@@ -120,14 +120,29 @@ class MedPCParser:
             return None
 
     def _parse_single_session(self, block: str, filename: str) -> Optional["ParsedSession"]:
+        """Parse one record into metadata, scalars and arrays.
+
+        ORDER-INDEPENDENT (v7.2). The previous version parsed in three fixed
+        phases and the scalar phase stopped at the first bare "X:" array header:
+
+            elif re.match(r"^[A-Z]:$", line):
+                break   # first array header - stop scalar parsing
+
+        That assumes MedPC always prints every scalar before every array. It
+        does so only when DISKVARS happens to be ordered that way. When a
+        program declares an array early -- e.g. DISKVARS = A,B,C,I,M,N,O,P,Q,U
+        where B is DIM'd -- every scalar after that array is silently dropped,
+        so U (extinction total), M/N/O (reinstatement) and Q (session number)
+        come back missing and the per-session breakdown collapses to nothing.
+
+        This version makes a single pass and classifies each line on its own
+        merits, so scalars and arrays may interleave freely.
+        """
         lines = block.splitlines()
         meta: Dict[str, str] = {}
         scalars: Dict[str, float] = {}
         arrays: Dict[str, List[float]] = {}
-        i = 0
 
-        # ── 1. Metadata / Header ──────────────────────────────────────────────
-        # Read key: value lines until the first scalar or array header line.
         KNOWN_META_KEYS = {
             "Subject", "MSN", "Start Date", "End Date", "Box", "Room",
             "Experiment", "Group", "Protocol", "Comment",
@@ -137,84 +152,64 @@ class MedPCParser:
             "box", "room", "cage", "experiment", "group"
         }
 
-        while i < len(lines):
-            line = lines[i].strip()
-            # Stop when we reach the scalar/array variable section
-            if re.match(r"^[A-Z]:\s*-?\d", line) or re.match(r"^[A-Z]:$", line):
-                break
-            if ":" in line and not line.startswith("\\"):
-                key_part, val_part = line.split(":", 1)
-                key = key_part.strip()
-                val = val_part.strip()
-                if key in KNOWN_META_KEYS or key.lower() in KNOWN_META_LOWER:
-                    meta[key] = val
-            i += 1
+        SCALAR_RE = re.compile(r"^([A-Z]):\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\s*$")
+        ARRAY_HDR_RE = re.compile(r"^([A-Z]):$")
+        ROW_RE = re.compile(r"^\d+:\s*")
 
-        # ── 2. Scalars ────────────────────────────────────────────────────────
-        # Lines of the form "A:  123.45" or "I:  0"
-        # Stop at the first bare array header ("A:" alone on its line).
-        while i < len(lines):
-            line = lines[i].strip()
-            scalar_match = re.match(
-                r"^([A-Z]):\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\s*$", line
-            )
-            if scalar_match:
-                var = scalar_match.group(1)
-                val = self._safe_float(scalar_match.group(2))
-                if val is not None:
-                    scalars[var] = val
-            elif re.match(r"^[A-Z]:$", line):
-                break   # first array header — stop scalar parsing
-            elif line.startswith("\\") or re.match(r"={5,}", line):
-                break
-            # blank lines between scalars are fine — skip silently
-            i += 1
-
-        # ── 3. Arrays ─────────────────────────────────────────────────────────
         current_var: Optional[str] = None
         current_data: List[float] = []
 
-        while i < len(lines):
-            line = lines[i].strip()
+        def flush():
+            nonlocal current_var, current_data
+            if current_var is not None:
+                # Keep zero-length arrays too: "present but empty" is a real,
+                # distinguishable state from "absent".
+                arrays[current_var] = current_data
+            current_var, current_data = None, []
 
-            # Array header: single letter + colon on its own line, e.g. "A:"
-            m = re.match(r"^([A-Z]):$", line)
+        for raw in lines:
+            line = raw.strip()
+            if not line:
+                continue
+            if line.startswith("\\") or re.match(r"={5,}", line):
+                flush()
+                continue
+
+            m = ARRAY_HDR_RE.match(line)
             if m:
-                if current_var is not None and current_data:
-                    arrays[current_var] = current_data
+                flush()
                 current_var = m.group(1)
                 current_data = []
+                continue
 
-            elif current_var is not None and line:
-                # Strip the leading row index, e.g. "     0:  " or "  3195:  "
-                # Row indices always have a colon; bare session counters do not.
-                # Crucially: ONLY strip the pattern "digits-colon-spaces" — this
-                # distinguishes "     0:  1234.0" (array row) from a session counter
-                # or other stray line.
-                clean = re.sub(r"^\d+:\s*", "", line)
+            m = SCALAR_RE.match(line)
+            if m:
+                flush()
+                val = self._safe_float(m.group(2))
+                if val is not None:
+                    scalars[m.group(1)] = val
+                continue
 
-                # If stripping left us with an empty string (row index line with
-                # no data values), skip it.
-                if not clean.strip():
-                    i += 1
-                    continue
-
-                # Parse each whitespace-separated token as a float.
-                # Filter val < 0: the only negative value in MedPC output is
-                # the -987.987 end-of-data sentinel.  All real counts and
-                # timestamps are non-negative.
+            if current_var is not None and ROW_RE.match(line):
+                clean = ROW_RE.sub("", line)
                 for token in clean.split():
                     val = self._safe_float(token)
+                    # -987.987 is MedPC's end-of-data sentinel; it is the only
+                    # negative value these programs emit.
                     if val is not None and val >= 0:
                         current_data.append(val)
+                continue
 
-            i += 1
+            if ":" in line and not line.startswith("\\"):
+                key_part, val_part = line.split(":", 1)
+                key, val = key_part.strip(), val_part.strip()
+                if key in KNOWN_META_KEYS or key.lower() in KNOWN_META_LOWER:
+                    flush()
+                    meta[key] = val
+                continue
 
-        # Flush the last array
-        if current_var is not None and current_data:
-            arrays[current_var] = current_data
+        flush()
 
-        # ── Validation ────────────────────────────────────────────────────────
         if not meta.get("Start Date") or not meta.get("Subject"):
             raise ValueError("Missing required metadata (Start Date or Subject)")
 
