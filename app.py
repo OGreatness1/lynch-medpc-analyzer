@@ -65,9 +65,15 @@ except ImportError:
 if _MISSING or CONFIG_VERSION != "7.2":
     st.title("Deployment is out of sync")
     st.error(
-        "app.py is v7.0 but at least one other module is still v6.3. "
-        "Push **all** of config.py, analyzer.py, app.py, plotter.py and wide_export.py together, "
-        "then reboot the app from *Manage app → Reboot*."
+        f"This app expects every module at v{'7.2'}. "
+        "The full set is **config.py, analyzer.py, app.py, parser.py, plotter.py "
+        "and wide_export.py** \u2014 push them together in one commit, then reboot "
+        "from *Manage app \u2192 Reboot*."
+    )
+    st.info(
+        "**\"No module named X\"** means that file is missing from the repo "
+        "entirely \u2014 upload it. Any other import error means that file is "
+        "present but still an older version \u2014 re-upload it."
     )
     if _MISSING:
         st.subheader("Modules that failed to import")
