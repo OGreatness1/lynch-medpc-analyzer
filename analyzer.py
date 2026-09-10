@@ -92,6 +92,11 @@ DEFAULT_WEIGHT_G = 300.0
 # ═════════════════════════════════════════════════════════════════════════════
 
 
+# Filled in by process_sessions on every run; read by the app's Diagnostics
+# panel so an empty result explains itself instead of rendering nothing.
+LAST_DIAGNOSTICS: Dict[str, Any] = {}
+
+
 def _round_weight_to_table(weight_g: float) -> int:
     """Round weight to nearest 10 g, clamped to [100, 890]."""
     return max(100, min(890, round(weight_g / 10) * 10))
@@ -270,6 +275,29 @@ def hourly_from_j_array(j: List[float]) -> List[Dict[str, float]]:
     return rows
 
 
+def segment_diagnosis(session: ParsedSession, mapping: dict) -> str:
+    """Why did this record yield no per-session rows?
+
+    Returns "" when the record is fine. Used by the UI so an empty breakdown
+    explains itself instead of silently rendering nothing.
+    """
+    special = mapping.get("special_processing")
+    if special not in ("EXTINCTION_DETAIL", "REINSTATEMENT_DETAIL", "CUE_RELAPSE_SEGMENTS"):
+        return "This program does not pack multiple test sessions into one record."
+    wanted = list(mapping.get("extinction_session_vars", [])) \
+        + list(mapping.get("active_segment_vars", [])) \
+        + list(mapping.get("inactive_segment_vars", []))
+    for k in ("reinstatement_active", "reinstatement_inactive", "reinstatement_cues"):
+        if mapping.get(k):
+            wanted.append(mapping[k])
+    missing = [v for v in wanted if v not in session.scalars]
+    if missing:
+        return (f"Variables {', '.join(missing)} are not present as scalars in this "
+                f"record. Present scalars: {', '.join(sorted(session.scalars)) or '(none)'}. "
+                f"Present arrays: {', '.join(sorted(session.arrays)) or '(none)'}.")
+    return ""
+
+
 def build_segments(session: ParsedSession, mapping: dict, prog: str) -> List[Dict[str, Any]]:
     """
     Expand a record that contains several test sessions into one row per
@@ -377,6 +405,7 @@ def process_sessions(
     all_rows   = []
     all_hourly = []
     all_segments = []
+    segment_problems = []
     unmapped   = []
     found: Set[str] = set()
     weight_key = _round_weight_to_table(avg_weight_g)
@@ -476,6 +505,12 @@ def process_sessions(
             "mapping_unverified":    bool(mapping.get("unverified")),
             "Box":  sess.meta.get("Box",  ""),
             "Room": sess.meta.get("Room", "") or sess.meta.get("Experiment", ""),
+            # Which letters this record actually carried. When a mapped
+            # variable is missing from here, the program wrote its DISKVARS in
+            # a different order or a different revision was running - and the
+            # affected column will read 0 with no other clue.
+            "scalar_keys": ",".join(sorted(sess.scalars)),
+            "array_keys":  ",".join(sorted(sess.arrays)),
         }
 
         special = mapping.get("special_processing")
@@ -514,7 +549,15 @@ def process_sessions(
         all_rows.append(row)
 
         # ── Segment expansion (extinction sessions, relapse segments) ───────
-        for seg in build_segments(sess, mapping, prog):
+        _segs = build_segments(sess, mapping, prog)
+        if not _segs and special in ("EXTINCTION_DETAIL", "REINSTATEMENT_DETAIL",
+                                     "CUE_RELAPSE_SEGMENTS"):
+            segment_problems.append({
+                "canonical_subject": canon, "program_name": prog, "raw_msn": raw_msn,
+                "start_date": start_dt, "file": sess.filename,
+                "why": segment_diagnosis(sess, mapping),
+            })
+        for seg in _segs:
             all_segments.append({
                 "canonical_subject": canon,
                 "gender":            gender,
@@ -562,6 +605,11 @@ def process_sessions(
     df_hourly    = pd.DataFrame(all_hourly)
     df_segments  = pd.DataFrame(all_segments)
     df_unmapped  = pd.DataFrame(unmapped)
+    # Exposed as a module global rather than a 6th return value so the
+    # process_sessions signature stays put. app.py reads it immediately after
+    # the call and stashes it in session_state.
+    LAST_DIAGNOSTICS["segment_problems"] = pd.DataFrame(segment_problems)
+    LAST_DIAGNOSTICS["n_records_in"] = len(sessions)
 
     if not df_sessions.empty:
         df_sessions = df_sessions.sort_values(["canonical_subject", "start_date"])
@@ -573,14 +621,12 @@ def process_sessions(
             ["canonical_subject", "program_name", "start_date", "session_day"]
         ].drop_duplicates(subset=["canonical_subject", "program_name", "start_date"])
 
-        for df in (df_hourly, df_segments):
-            if not df.empty:
-                merged = df.merge(
-                    day_map, on=["canonical_subject", "program_name", "start_date"], how="left"
-                )
-                df.drop(df.index, inplace=True)
-                for col in merged.columns:
-                    df[col] = merged[col].values
+        if not df_hourly.empty:
+            df_hourly = df_hourly.merge(
+                day_map, on=["canonical_subject", "program_name", "start_date"], how="left")
+        if not df_segments.empty:
+            df_segments = df_segments.merge(
+                day_map, on=["canonical_subject", "program_name", "start_date"], how="left")
 
     if not df_hourly.empty:
         df_hourly = df_hourly.sort_values(["canonical_subject", "start_date", "hour"])
