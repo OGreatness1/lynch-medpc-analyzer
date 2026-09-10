@@ -13,22 +13,75 @@ warnings.filterwarnings("ignore")
 # set_page_config MUST be the very first Streamlit call.
 st.set_page_config(page_title="Lynch Lab MedPC Analyzer", page_icon="🧬", layout="wide")
 
-from parser import MedPCParser
-from analyzer import (
-    process_sessions, generate_pattern_flags,
-    create_daily_summary, report_missing_and_box_room,
-    create_segment_summary,
-)
-from plotter import (
-    create_plot, create_interactive_plot,
-    create_cumulative_plot, create_discrimination_plot,
-    create_pr_breakpoint_plot, create_efficiency_trend,
-    create_response_rate_plot, create_hourly_heatmap,
-    create_hourly_line_plot, create_mean_sem_trajectory,
-    create_within_session_plot, create_cohort_discrimination_plot,
-    create_cohort_hourly_line_plot, create_segment_plot
-)
-from utils import canonicalize_id
+# ── Module version guard ─────────────────────────────────────────────────────
+# app.py v7.0 needs analyzer.py v7.0 and plotter.py v7.0. If only some files are
+# pushed, Python raises a bare ImportError and Streamlit Cloud redacts it, which
+# makes a partial deploy look like a mystery crash. Name the offending file
+# instead.
+_MISSING = []
+try:
+    from parser import MedPCParser
+except ImportError:
+    _MISSING.append("parser.py")
+
+try:
+    import analyzer as _analyzer
+    from analyzer import (
+        process_sessions, generate_pattern_flags,
+        create_daily_summary, report_missing_and_box_room,
+        create_segment_summary,
+    )
+except ImportError as _e:
+    _MISSING.append(f"analyzer.py  ({_e})")
+
+try:
+    from plotter import (
+        create_plot, create_interactive_plot,
+        create_cumulative_plot, create_discrimination_plot,
+        create_pr_breakpoint_plot, create_efficiency_trend,
+        create_response_rate_plot, create_hourly_heatmap,
+        create_hourly_line_plot, create_mean_sem_trajectory,
+        create_within_session_plot, create_cohort_discrimination_plot,
+        create_cohort_hourly_line_plot, create_segment_plot
+    )
+except ImportError as _e:
+    _MISSING.append(f"plotter.py  ({_e})")
+
+try:
+    from utils import canonicalize_id
+except ImportError:
+    _MISSING.append("utils.py")
+
+try:
+    from wide_export import parse_id_list, build_wide_workbook
+except ImportError as _e:
+    _MISSING.append(f"wide_export.py  ({_e})")
+
+try:
+    from config import CONFIG_VERSION
+except ImportError:
+    CONFIG_VERSION = None
+
+if _MISSING or CONFIG_VERSION != "7.2":
+    st.title("Deployment is out of sync")
+    st.error(
+        "app.py is v7.0 but at least one other module is still v6.3. "
+        "Push **all** of config.py, analyzer.py, app.py, plotter.py and wide_export.py together, "
+        "then reboot the app from *Manage app → Reboot*."
+    )
+    if _MISSING:
+        st.subheader("Modules that failed to import")
+        for m in _MISSING:
+            st.write(f"- `{m}`")
+    if CONFIG_VERSION != "7.2":
+        st.subheader("config.py version")
+        st.write(f"Found `CONFIG_VERSION = {CONFIG_VERSION!r}`, expected `'7.2'`.")
+    st.caption(
+        "Streamlit Cloud redacts the real ImportError, so this check reports it directly. "
+        "The most common cause is committing app.py without analyzer.py."
+    )
+    st.stop()
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _hr_ok(df_hr) -> bool:
     return df_hr is not None and isinstance(df_hr, pd.DataFrame) and not df_hr.empty
@@ -72,6 +125,14 @@ with st.sidebar:
     settings_file = st.file_uploader("settings.json (custom MSN & mappings)", type=["json"])
     st.header("Allowed / Expected IDs")
     id_file = st.file_uploader("ID list (.txt)", type=["txt"])
+    st.caption(
+        "One ID per line. Optionally add a Group and a block label:\n\n"
+        "`O366M` — no group\n\n"
+        "`O366M,Naive` — Group column filled\n\n"
+        "`O366M,Saline,Naive` — Group Saline, grouped under the NAIVE banner\n\n"
+        "MedPC records carry no group of their own, so the paper-format export "
+        "takes it from here."
+    )
     st.header("Data Files")
     data_files = st.file_uploader("MedPC data files (.txt, .zip, or extensionless)", accept_multiple_files=True)
 
@@ -113,9 +174,10 @@ if st.button("🚀 Run Analysis", type="primary"):
                 st.warning(f"Settings.json invalid → {e}")
 
         allowed_canon: set = set()
+        id_groups: dict = {}
+        id_blocks: dict = {}
         if id_file:
-            allowed_raw = {line.decode("utf-8", errors="ignore").strip() for line in id_file if line.strip()}
-            allowed_canon = {canonicalize_id(x) for x in allowed_raw if x}
+            allowed_canon, id_groups, id_blocks = parse_id_list(id_file, canonicalize_id)
 
         parser = MedPCParser()
         all_sessions = []
@@ -167,7 +229,10 @@ if st.button("🚀 Run Analysis", type="primary"):
         st.session_state.update({
             "df_sess": df_sess, "df_hr": df_hr, "df_seg": df_seg,
             "df_unmapped": df_unmapped, "found_ids": found_ids,
-            "skipped_report": parser.get_skipped_report(), "allowed_canon": allowed_canon, "analysis_run": True,
+            "seg_problems": _analyzer.LAST_DIAGNOSTICS.get("segment_problems"),
+            "n_records_in": _analyzer.LAST_DIAGNOSTICS.get("n_records_in", 0),
+            "skipped_report": parser.get_skipped_report(), "allowed_canon": allowed_canon,
+            "id_groups": id_groups, "id_blocks": id_blocks, "analysis_run": True,
         })
         st.balloons()
         st.rerun()
@@ -204,6 +269,36 @@ if ("df_sess" in st.session_state and st.session_state.df_sess is not None and n
                 "Add the MSN to DEFAULT_MSN_PATTERNS in config.py, then re-run."
             )
             st.dataframe(df_unmap.groupby("raw_msn").size().reset_index(name="sessions"))
+
+        with st.expander("🔎 Diagnostics — what the parser actually found", expanded=False):
+            d1, d2, d3, d4 = st.columns(4)
+            d1.metric("Records read", st.session_state.get("n_records_in", 0))
+            d2.metric("Sessions kept", len(df_sess))
+            d3.metric("Hourly rows", 0 if not _hr_ok(df_hr) else len(df_hr))
+            d4.metric("Segment rows", 0 if not _hr_ok(df_seg) else len(df_seg))
+
+            st.write("**Sessions and segment rows per program**")
+            per_prog = df_sess.groupby("program_name").size().rename("sessions").to_frame()
+            if _hr_ok(df_seg):
+                per_prog = per_prog.join(
+                    df_seg.groupby("program_name").size().rename("segment_rows"))
+            else:
+                per_prog["segment_rows"] = 0
+            per_prog["segment_rows"] = per_prog["segment_rows"].fillna(0).astype(int)
+            st.dataframe(per_prog.reset_index())
+
+            probs = st.session_state.get("seg_problems")
+            if probs is not None and not probs.empty:
+                st.write("**Records that should have had a per-session breakdown but didn't**")
+                st.dataframe(probs)
+
+            if "scalar_keys" in df_sess.columns:
+                st.write("**Variable letters present, per program** "
+                         "(a mapped variable missing here reads as 0 downstream)")
+                st.dataframe(
+                    df_sess.groupby("program_name")[["scalar_keys", "array_keys"]]
+                           .agg(lambda s: s.mode().iloc[0] if not s.mode().empty else "")
+                           .reset_index())
 
         if show_debug and skipped:
             st.subheader("Skipped Sessions Log")
@@ -260,7 +355,46 @@ if ("df_sess" in st.session_state and st.session_state.df_sess is not None and n
                 for plt_buf, name in plot_list:
                     if plt_buf: zf.writestr(f"Plots/{safe}/{name}.png", plt_buf.getvalue())
 
+            # Paper-format workbook: one sheet per program plus Joined, laid out
+            # as ID / Group / numbered session columns with Group x Sex blocks
+            # and live Mean/SEM formulas.
+            try:
+                paper_buf = io.BytesIO()
+                build_wide_workbook(
+                    df_sess, df_seg,
+                    st.session_state.get("id_groups") or {},
+                    st.session_state.get("id_blocks") or {},
+                    paper_buf,
+                )
+                zf.writestr("01_PaperFormat_AllPrograms.xlsx", paper_buf.getvalue())
+            except Exception as _e:
+                st.warning(f"Paper-format export skipped: {_e}")
+
         st.download_button("📥 Download ZIP (All Programs + Plots + Logs)", zip_buffer.getvalue(), f"MedPC_{datetime.now():%Y%m%d_%H%M}.zip", "application/zip")
+
+        try:
+            paper_only = io.BytesIO()
+            sheets = build_wide_workbook(
+                df_sess, df_seg,
+                st.session_state.get("id_groups") or {},
+                st.session_state.get("id_blocks") or {},
+                paper_only,
+            )
+            st.download_button(
+                "📄 Download Paper-Format Workbook (ID / Group / per-session columns)",
+                paper_only.getvalue(),
+                f"MedPC_PaperFormat_{datetime.now():%Y%m%d_%H%M}.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+            st.caption(f"Sheets: {', '.join(sheets)}")
+            if not (st.session_state.get("id_groups") or {}):
+                st.info(
+                    "The Group column is empty because your ID list has only one column. "
+                    "Add `,Group` after each ID to fill it and split the blocks."
+                )
+        except Exception as _e:
+            st.warning(f"Paper-format export unavailable: {_e}")
+
         st.success("Analysis complete!")
 
         st.header("Live Dashboard")
@@ -301,6 +435,8 @@ if ("df_sess" in st.session_state and st.session_state.df_sess is not None and n
                     # ─── EVERY TEST SESSION (extinction / relapse segments) ───
                     sub_g = (df_seg[df_seg["program_name"] == p].copy()
                              if _hr_ok(df_seg) else pd.DataFrame())
+                    packs_sessions = any(k in p.upper() for k in
+                                         ("EXTINCTION", "REINSTATEMENT", "CUE RELAPSE"))
                     if not sub_g.empty:
                         st.divider()
                         st.subheader(f"Every test session — {p}")
@@ -313,6 +449,27 @@ if ("df_sess" in st.session_state and st.session_state.df_sess is not None and n
                         st.plotly_chart(create_segment_plot(sub_g), use_container_width=True,
                                         key=f"segments_{p}_{tab_idx}")
                         st.dataframe(create_segment_summary(sub_g))
+                    elif packs_sessions:
+                        # Never fail silently: this program SHOULD have a
+                        # per-session breakdown, so say why it doesn't.
+                        st.divider()
+                        st.subheader(f"Every test session — {p}")
+                        st.error("No per-session breakdown was produced for this program.")
+                        probs = st.session_state.get("seg_problems")
+                        if probs is not None and not probs.empty:
+                            mine = probs[probs["program_name"] == p]
+                            if not mine.empty:
+                                st.write("**Why:**")
+                                for w in mine["why"].dropna().unique()[:5]:
+                                    st.write(f"- {w}")
+                                st.dataframe(mine)
+                        st.caption(
+                            "The usual cause is that the program wrote its DISKVARS in an "
+                            "order this build did not expect, so the per-session variables "
+                            "never reached the parser. The scalar_keys / array_keys columns "
+                            "in the Sessions table show exactly which letters each record "
+                            "actually contained."
+                        )
 
                     # ─── DISCRIMINATION FRONT AND CENTER ───
                     st.divider()
