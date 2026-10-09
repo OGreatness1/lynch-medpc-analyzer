@@ -1,5 +1,5 @@
 # Lynch Lab MedPC Analyzer 🧬
-**Version 5.0 (Modular Production Release)**
+**Version 7.3**
 
 
 
@@ -25,6 +25,11 @@ If a student programs a new experiment in MedPC:
 2. Add the `MSN` name to `DEFAULT_MSN_PATTERNS`.
 3. If it uses standard variables (I, R, etc.), assign it to `map_rat_fr` in `DEFAULT_VARIABLE_MAPPINGS`.
 4. The system will automatically accommodate the new format.
+
+## Checking a change
+* `python test_extinction.py` - extinction / reinstatement / cue-relapse regression suite.
+* `python test_programs.py` - duplicate saves, daily-reset remnants, hourly binning and per-program mapping checks.
+* `python smoke_pipeline.py <data folder>` - runs every analysis, export and plot the app makes on a folder of MedPC files and lists any errors.
 
 ## Troubleshooting
 * **"No data found"**: Verify the subject ID matches exactly (the system automatically corrects `O` vs `0` errors).

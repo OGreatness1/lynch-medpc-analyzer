@@ -7,6 +7,19 @@ import pandas as pd
 
 LYNCH_COLORS = px.colors.qualitative.Set2 + px.colors.qualitative.Pastel
 
+# Readable names for the data columns that end up in legends, axis titles and
+# tooltips (otherwise they read "canonical_subject", "segment_type", ...).
+PRETTY_LABELS = {
+    "canonical_subject": "Subject", "gender": "Sex", "session_day": "Session day",
+    "first_session_time": "Date", "start_date": "Date", "hour": "Hour of session",
+    "total_infusions": "Infusions", "total_active_presses": "Active presses",
+    "total_inactive_presses": "Inactive presses", "infusions": "Infusions",
+    "active_presses": "Active presses", "inactive_presses": "Inactive presses",
+    "avg_infusion_events": "Avg infusions", "cumulative_infusions": "Cumulative infusions",
+    "segment_label": "Test session", "segment_type": "Phase", "mean": "Mean",
+    "sem": "SEM", "size": "n", "duration_sec": "Duration (s)", "session_count": "Sessions",
+}
+
 def get_date_column(df: pd.DataFrame) -> str | None:
     for col in ["session_day", "start_date", "first_session_time", "date", "end_date"]:
         if col in df.columns:
@@ -56,25 +69,32 @@ def create_plot(data, x, y, title, hue=None, kind="bar", palette="Set1", style=N
 def create_interactive_plot(data, x, y, title, hue=None, kind="line", color_discrete_sequence=LYNCH_COLORS):
     if data.empty:
         return go.Figure().update_layout(title=f"No data available — {title}")
-    hover_cols = data.columns.tolist()
+    # Hover shows the identifying fields plus the plotted pair. Passing every
+    # column of the daily table produced 20+ line tooltips that covered the
+    # chart; anything else is in the Sessions / Daily sheets.
+    _keep = ["canonical_subject", "gender", "session_day", "first_session_time",
+             "total_infusions", "total_active_presses", "total_inactive_presses",
+             "session_count", x, y]
+    hover_cols = [c for c in dict.fromkeys(_keep) if c and c in data.columns]
     if kind == "line":
-        fig = px.line(data, x=x, y=y, color=hue, title=title, markers=True,
+        fig = px.line(data, labels=PRETTY_LABELS, x=x, y=y, color=hue, title=title, markers=True,
                       hover_data=hover_cols, color_discrete_sequence=color_discrete_sequence)
         fig.update_xaxes(tickangle=45)
     elif kind == "bar":
-        fig = px.bar(data, x=x, y=y, color=hue, title=title, barmode="group",
+        fig = px.bar(data, labels=PRETTY_LABELS, x=x, y=y, color=hue, title=title, barmode="group",
                      hover_data=hover_cols, color_discrete_sequence=color_discrete_sequence)
     elif kind == "scatter":
-        fig = px.scatter(data, x=x, y=y, color=hue, title=title, opacity=0.7,
+        fig = px.scatter(data, labels=PRETTY_LABELS, x=x, y=y, color=hue, title=title, opacity=0.7,
                          hover_data=hover_cols, marginal_x="box", marginal_y="box",
                          color_discrete_sequence=color_discrete_sequence)
     elif kind == "box":
-        fig = px.box(data, x=x, y=y, color=hue, title=title, points="all",
+        fig = px.box(data, labels=PRETTY_LABELS, x=x, y=y, color=hue, title=title, points="all",
                      hover_data=hover_cols, color_discrete_sequence=color_discrete_sequence)
     else:
-        fig = px.line(data, x=x, y=y, title=title, hover_data=hover_cols, color_discrete_sequence=color_discrete_sequence)
-    fig.update_layout(template="plotly_white", height=600, legend_title_text=hue or "",
-                      xaxis_title=x.replace("_", " ").title(), yaxis_title=y.replace("_", " ").title())
+        fig = px.line(data, labels=PRETTY_LABELS, x=x, y=y, title=title, hover_data=hover_cols, color_discrete_sequence=color_discrete_sequence)
+    fig.update_layout(height=600, legend_title_text=PRETTY_LABELS.get(hue, hue or ""),
+                      xaxis_title=PRETTY_LABELS.get(x, x.replace("_", " ").title()),
+                      yaxis_title=PRETTY_LABELS.get(y, y.replace("_", " ").title()))
     return fig
 
 def create_hourly_line_plot(hr: pd.DataFrame, title: str = "Avg Infusions by Hour of Session"):
@@ -93,9 +113,9 @@ def create_hourly_line_plot(hr: pd.DataFrame, title: str = "Avg Infusions by Hou
     agg["avg_infusion_events"] = agg["total_infusion_events"] / agg["n_sessions"]
     agg = agg.sort_values(["canonical_subject", "hour"])
 
-    fig = px.line(agg, x="hour", y="avg_infusion_events", color="canonical_subject", title=title, markers=True,
+    fig = px.line(agg, labels=PRETTY_LABELS, x="hour", y="avg_infusion_events", color="canonical_subject", title=title, markers=True,
                   hover_data={"total_infusion_events": True, "n_sessions": True}, color_discrete_sequence=LYNCH_COLORS)
-    fig.update_layout(template="plotly_white", height=600, xaxis_title="Hour of Session",
+    fig.update_layout(height=600, xaxis_title="Hour of Session",
                       yaxis_title="Avg Infusion Events (per session)", legend_title_text="Subject", xaxis=dict(dtick=1))
     return fig
 
@@ -143,7 +163,7 @@ def create_cohort_hourly_line_plot(hr: pd.DataFrame, split_by_gender: bool = Fal
         title_text = "Cohort Average Infusions by Hour"
 
     fig.update_layout(title=title_text, xaxis_title="Hour of Session", yaxis_title="Average Infusions",
-                      template="plotly_white", hovermode="x unified", xaxis=dict(dtick=1),
+                      hovermode="x unified", xaxis=dict(dtick=1),
                       legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
     return fig
 
@@ -163,7 +183,7 @@ def create_hourly_heatmap(hr: pd.DataFrame):
 
     fig = px.imshow(avg_pivot, title="Avg Hourly Infusions per Session", aspect="auto", color_continuous_scale="Blues",
                     labels=dict(x="Hour of Session", y="Subject", color="Avg Infusions / Session"))
-    fig.update_layout(template="plotly_white", height=500)
+    fig.update_layout(height=500)
     return fig
 
 def create_cumulative_plot(sess: pd.DataFrame):
@@ -178,10 +198,10 @@ def create_cumulative_plot(sess: pd.DataFrame):
     xaxis_cfg = dict(tickangle=45, rangeslider_visible=True)
     if not is_int:
         xaxis_cfg["tickformat"] = "%Y-%m-%d"
-    fig = px.line(sess, x=date_col, y="cumulative_infusions", color="canonical_subject", title="Cumulative Infusions Over Time",
+    fig = px.line(sess, labels=PRETTY_LABELS, x=date_col, y="cumulative_infusions", color="canonical_subject", title="Cumulative Infusions Over Time",
                   markers=True, hover_data=["infusions", "active_presses", "program_name", "gender"], color_discrete_sequence=LYNCH_COLORS)
     fig.update_layout(xaxis_title="Session Day" if is_int else "Date", yaxis_title="Cumulative Infusions",
-                      template="plotly_white", hovermode="x unified", xaxis=xaxis_cfg,
+                      hovermode="x unified", xaxis=xaxis_cfg,
                       legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
     return fig
 
@@ -210,13 +230,13 @@ def create_cohort_discrimination_plot(sess: pd.DataFrame, split_by_gender: bool 
         agg[date_col] = pd.to_datetime(agg[date_col]).dt.strftime("%Y-%m-%d")
 
     if split_by_gender and "gender" in agg.columns:
-        fig = px.bar(agg, x=date_col, y="mean", color="Lever", facet_col="gender",
+        fig = px.bar(agg, labels=PRETTY_LABELS, x=date_col, y="mean", color="Lever", facet_col="gender",
                      barmode="group", error_y="sem", title="Average Discrimination by Gender", color_discrete_sequence=LYNCH_COLORS)
     else:
-        fig = px.bar(agg, x=date_col, y="mean", color="Lever",
+        fig = px.bar(agg, labels=PRETTY_LABELS, x=date_col, y="mean", color="Lever",
                      barmode="group", error_y="sem", title="Cohort Average Discrimination (Mean ± SEM)", color_discrete_sequence=LYNCH_COLORS)
 
-    fig.update_layout(template="plotly_white", height=450, xaxis_title="Session Day" if is_int else "Date", yaxis_title="Average Presses")
+    fig.update_layout(height=450, xaxis_title="Session Day" if is_int else "Date", yaxis_title="Average Presses")
     fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
     return fig
 
@@ -228,8 +248,19 @@ def create_discrimination_plot(sess: pd.DataFrame):
         return go.Figure().update_layout(title="Discrimination Plot — No Date Column")
     df_melt = sess.melt(id_vars=[date_col, "canonical_subject"], value_vars=["active_presses", "inactive_presses"], var_name="Lever", value_name="Presses")
     df_melt["Lever"] = df_melt["Lever"].str.replace("_presses", "").str.title()
-    fig = px.bar(df_melt, x=date_col, y="Presses", color="Lever", barmode="group", facet_col="canonical_subject", facet_col_wrap=3, title="Individual Lever Discrimination per Session")
-    fig.update_layout(template="plotly_white", height=600)
+    # One facet per subject, three per row.  Plotly's default row spacing
+    # raises "Vertical spacing cannot be greater than 1/(rows-1)" once there
+    # are more than ~15 rows (45+ subjects - a single cohort's worth), and a
+    # fixed 600 px height crushed even smaller cohorts into unreadable slivers.
+    # Size both to the actual number of rows.
+    n_cols = 3
+    n_rows = max(1, -(-df_melt["canonical_subject"].nunique() // n_cols))
+    row_spacing = min(0.07, 0.5 / (n_rows - 1)) if n_rows > 1 else 0.07
+    fig = px.bar(df_melt, labels=PRETTY_LABELS, x=date_col, y="Presses", color="Lever", barmode="group",
+                 facet_col="canonical_subject", facet_col_wrap=n_cols,
+                 facet_row_spacing=row_spacing,
+                 title="Individual Lever Discrimination per Session")
+    fig.update_layout(height=max(600, 220 * n_rows))
     return fig
 
 def create_pr_breakpoint_plot(sess: pd.DataFrame):
@@ -269,7 +300,7 @@ def create_within_session_plot(active_timestamps, duration=None):
     max_time = max(active_timestamps) * 1.05
     if duration and duration > 0:
         max_time = max(max_time, duration)
-    fig.update_layout(title="Within-Session Timepoint Data: Active Responses", xaxis_title="Time in Session (seconds)", yaxis_title="Cumulative Active Responses", xaxis=dict(range=[0, max_time]), template="plotly_white", hovermode="x unified")
+    fig.update_layout(title="Within-Session Timepoint Data: Active Responses", xaxis_title="Time in Session (seconds)", yaxis_title="Cumulative Active Responses", xaxis=dict(range=[0, max_time]), hovermode="x unified")
     return fig
 
 def create_mean_sem_trajectory(daily: pd.DataFrame, split_by_gender: bool = False):
@@ -324,7 +355,7 @@ def create_mean_sem_trajectory(daily: pd.DataFrame, split_by_gender: bool = Fals
     xaxis_cfg = dict(tickangle=45, rangeslider_visible=True)
     if tick_fmt:
         xaxis_cfg["tickformat"] = tick_fmt
-    fig.update_layout(title=title_text, xaxis_title=x_label, yaxis_title="Infusions (Mean ± SEM)", template="plotly_white", hovermode="x unified", xaxis=xaxis_cfg, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+    fig.update_layout(title=title_text, xaxis_title=x_label, yaxis_title="Infusions (Mean ± SEM)", hovermode="x unified", xaxis=xaxis_cfg, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
     return fig
 
 
@@ -368,8 +399,7 @@ def create_segment_plot(seg: pd.DataFrame, split_by_gender: bool = False):
     agg["sem"] = agg["sem"].fillna(0)
     agg = agg.sort_values(["segment_type", "segment_index"])
 
-    fig = px.bar(
-        agg, x="segment_label", y="mean", color="Measure", barmode="group",
+    fig = px.bar(agg, labels=PRETTY_LABELS, x="segment_label", y="mean", color="Measure", barmode="group",
         error_y="sem",
         facet_col="segment_type" if agg["segment_type"].nunique() > 1 else None,
         facet_row="gender" if (split_by_gender and "gender" in agg.columns) else None,
@@ -377,7 +407,7 @@ def create_segment_plot(seg: pd.DataFrame, split_by_gender: bool = False):
         title="Responses per Test Session (Mean ± SEM)",
         color_discrete_sequence=LYNCH_COLORS,
     )
-    fig.update_layout(template="plotly_white", height=480,
+    fig.update_layout(height=480,
                       xaxis_title="Test session / segment", yaxis_title="Responses (Mean ± SEM)")
     fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1].replace("_", " ").title()))
     fig.update_xaxes(matches=None)

@@ -1,3 +1,4 @@
+import math
 import pandas as pd
 from typing import List, Tuple, Optional, Set, Dict, Any
 import re
@@ -194,7 +195,9 @@ def calculate_duration(session: ParsedSession, mapping: dict) -> float:
     if t0 is not None and t1 is not None:
         if pd.notna(d0) and pd.notna(d1):
             diff = (d1 - d0).days * 86400 + (t1 - t0)
-            # A box that never advanced End Date still rolls past midnight.
+            # Same-date records that end before they start are reset
+            # remnants and are excluded upstream (is_reset_remnant); this only
+            # guards a malformed date.
             if diff < 0:
                 diff += 86400
             if diff > 0:
@@ -216,6 +219,10 @@ def resolve_program(norm_msn: str, patterns: Dict[str, List[str]]) -> Optional[s
     """
     for name, pats in patterns.items():
         for pat in pats:
+            if pat.startswith("="):
+                if normalize_msn(pat[1:]) == norm_msn:
+                    return name
+                continue
             p = normalize_msn(pat)
             if p and p in norm_msn:
                 return name
@@ -245,26 +252,35 @@ def compute_breakpoint(session: ParsedSession, mapping: dict, infusions: float) 
 
 def hourly_from_j_array(j: List[float]) -> List[Dict[str, float]]:
     """
-    FR / fentanyl / PR hourly block.  The .MPC documents the layout as
+    FR / fentanyl hourly block.  The .MPC documents the layout as
 
         J(Q)=H.M, J(Q+1)=R, J(Q+2)=I, J(Q+3)=D, J(Q+4)=A, J(Q+5)=L, J(Q+6)=F
 
-    — seven columns per clock hour: hour, active presses, infusions, presses
-    during infusion, inactive presses, licks, ratio in effect.  Column sums
-    reproduce the R / I / A scalars exactly on all 647 fentanyl records in the
-    current dataset, so this is the authoritative within-session breakdown for
-    these programs.
+    seven slots per block; S.S.17 moves Q on by 7 at every top of the hour, so
+    block k holds the events of the k-th clock hour of the session (block 0
+    runs from the start to the first :00, so it is usually a partial hour).
+    Column sums reproduce R / I / A on 2,429 of 2,442 FR20 / FR20 PDT /
+    FENTANYL records (the rest are empty TEST boxes).
 
-    All-zero trailing slots (the array is DIM 170 regardless of session length)
-    are dropped so a 6-hour session does not contribute 18 phantom rows.
+    `hour` is the block POSITION - hours since session start, 0-based.  v7.2
+    used J(Q) itself, which is the CLOCK hour at the end of the block
+    (12:34 start -> 0, 14, 15 ... 23, 24, 1 ... 11), so every overnight session
+    plotted its after-midnight hours before its first hour.  The clock label
+    is kept as `clock_hour`.
+
+    Only the unused tail of the array (DIM 170 regardless of session length)
+    is dropped; a quiet hour inside the session stays as a zero row.
     """
+    blocks = [j[i:i + 7] for i in range(0, len(j) - 6, 7)]
+    used = [k for k, b in enumerate(blocks) if b[0] != 0 or any(b[1:6])]
+    if not used:
+        return []
     rows = []
-    for i in range(0, len(j) - 6, 7):
-        hour, act, inf, in_inf, inact, licks, ratio = j[i:i + 7]
-        if hour == 0 and act == 0 and inf == 0 and inact == 0 and licks == 0:
-            continue
+    for k, b in enumerate(blocks[:used[-1] + 1]):
+        label, act, inf, in_inf, inact, licks, ratio = b
         rows.append({
-            "hour": int(hour),
+            "hour": k,
+            "clock_hour": int(label) % 24 if label else None,
             "infusion_events": inf,
             "active_events": act,
             "inactive_events": inact,
@@ -287,9 +303,10 @@ def segment_diagnosis(session: ParsedSession, mapping: dict) -> str:
     wanted = list(mapping.get("extinction_session_vars", [])) \
         + list(mapping.get("active_segment_vars", [])) \
         + list(mapping.get("inactive_segment_vars", []))
-    for k in ("reinstatement_active", "reinstatement_inactive", "reinstatement_cues"):
-        if mapping.get(k):
-            wanted.append(mapping[k])
+    # Reinstatement variables are deliberately NOT required here.  A record
+    # that finished extinction without ever entering the cue phase is a valid
+    # record, not a broken one; requiring M/N/O sent every such animal to the
+    # problem log and made a real data-loss signal impossible to spot.
     missing = [v for v in wanted if v not in session.scalars]
     if missing:
         return (f"Variables {', '.join(missing)} are not present as scalars in this "
@@ -312,19 +329,30 @@ def build_segments(session: ParsedSession, mapping: dict, prog: str) -> List[Dic
         M (responses), N (cue deliveries) and O (inactive lever).
 
     Cue relapse (G136A/G136B/G138A/G138B/G140A/G140B CUE RELAPSE):
-        Q is the segment counter, incremented every time C(T) reaches 3600 s.
+        Q is the segment counter, incremented every time C(T) trips.
         A, D, F, G hold active responses for segments 1-4 and H, I, J, K the
-        matching inactive counts.  The segment timer is 3600 s in every
-        production variant, so these are HOURLY bins — the "0-30 min" comments
-        in the .MPC headers are stale and describe an earlier revision.
+        matching inactive counts.  The segments are 30 MINUTES wide, not 60:
+        "ADD C(0), C(T)" with T = 0 increments C(0) twice per second, so the
+        threshold 3600 is 1800 real seconds.  The "0-30 min" comments in the
+        .MPC headers are correct; v7.0-7.2 overrode them and doubled the bin
+        width.  Segment width now comes from mapping["segment_seconds"].
     """
     special = mapping.get("special_processing")
     rows: List[Dict[str, Any]] = []
 
     if special == "EXTINCTION_DETAIL":
+        # MedPC writes every letter, so a session that never ran is present
+        # as 0.  Q (sessions started) bounds the real ones; without the bound,
+        # an animal that stopped after session 6 adds three "0 presses" rows
+        # that pull down the session 7-9 means of the extinction curve.
+        q_key = mapping.get("session_count_var")
+        n_run = (int(session.scalars[q_key])
+                 if q_key and q_key in session.scalars else None)
         for idx, letter in enumerate(mapping.get("extinction_session_vars", []), start=1):
             if letter not in session.scalars:
                 continue
+            if n_run is not None and idx > n_run:
+                break
             rows.append({
                 "segment_type":        "extinction_session",
                 "segment_index":       idx,
@@ -335,9 +363,26 @@ def build_segments(session: ParsedSession, mapping: dict, prog: str) -> List[Dic
                 "cue_deliveries":      None,
                 "source_variable":     letter,
             })
-        # Terminal reinstatement test, if this record reached it.
+        # Terminal reinstatement test - ONLY when this record actually reached
+        # it.  v7.2 tested `if m_key:`, a config letter that is always truthy,
+        # so EVERY extinction record got a "reinstatement test" row and animals
+        # that never reached the cue phase were averaged in as zeros.
+        #
+        # The state flag decides (E = 0 once the cue phase starts).  Neither
+        # presence of M/N/O (MedPC writes every letter) nor M/N/O > 0 (that
+        # would drop real zero-response tests and inflate the mean) can.
+        # Without a flag variable, fall back to "some reinstatement count > 0".
         m_key = mapping.get("reinstatement_active")
-        if m_key:
+        flag_key = mapping.get("reinstatement_flag_var")
+        if flag_key and flag_key in session.scalars:
+            reached_reinstatement = (
+                session.scalars[flag_key] == mapping.get("reinstatement_flag_value", 0))
+        else:
+            reached_reinstatement = any(
+                get_val(session, mapping.get(k)) > 0
+                for k in ("reinstatement_active", "reinstatement_inactive",
+                          "reinstatement_cues") if mapping.get(k))
+        if m_key and reached_reinstatement:
             rows.append({
                 "segment_type":       "reinstatement_test",
                 "segment_index":      len(rows) + 1,
@@ -383,6 +428,82 @@ def build_segments(session: ParsedSession, mapping: dict, prog: str) -> List[Dic
     return rows
 
 
+def _end_sort_key(sess: ParsedSession) -> Tuple[pd.Timestamp, float]:
+    end_d = robust_parse_date(sess.meta.get("End Date", ""))
+    end_t = _hms_to_seconds(sess.meta.get("End Time", "")) or 0.0
+    return (end_d if pd.notna(end_d) else pd.Timestamp.min, end_t)
+
+
+def is_reset_remnant(sess: ParsedSession) -> bool:
+    """True for the idle record a box writes after its daily reset.
+
+    The 24 h programs (FR20, FR20 PDT, FENTANYL FR40, PR, DT4, intermittent
+    access, ...) flush the day's data around 11:00-12:00, then reset every
+    counter and run `~STARTDATE:= CURRENTDATE;~` - but leave the start TIME
+    alone.  When the next program is loaded a few minutes later, MedPC writes
+    the idle box as one more record: Start Date = today, Start Time = the
+    original start, End Date = today, End Time = the changeover.  It ends
+    before it begins.
+
+    In the lab's 2017-18 and 2025 data 488 of 8,370 records look like this.
+    487 have their real session (same subject, box and start time, ending that
+    day) in the data; the other is a TEST box.  Almost all hold no responses
+    (DT4 remnants hold the 1-2 presses made between its 12:00 reset and the
+    changeover).  Counted as sessions they became 23 h, zero-intake days and
+    pushed every later session_day of that animal one day out.
+    """
+    m = sess.meta
+    sd, ed = m.get("Start Date", "").strip(), m.get("End Date", "").strip()
+    t0, t1 = _hms_to_seconds(m.get("Start Time", "")), _hms_to_seconds(m.get("End Time", ""))
+    return bool(sd) and sd == ed and t0 is not None and t1 is not None and t1 < t0
+
+
+def deduplicate_sessions(sessions: List[ParsedSession]) -> Tuple[List[ParsedSession], pd.DataFrame]:
+    """Keep one record per session; return (kept, report of dropped copies).
+
+    MedPC regularly writes the same session into the daily file twice: an
+    interim save part-way through (End Time 11:00:00 / 11:50:00 is typical)
+    and the final record when the session closes - or the final record twice.
+    Both carry the same Subject, Start Date, Start Time, Box and MSN.  Counting
+    both double-counts the session and, because session_day is a running
+    count, shifts every later day's number for that animal.
+
+    In the 2025 data 70 of 1,655 records were such copies.  For all 33 copies
+    whose data differed, the later copy had the later End Date/Time and was
+    >= the earlier copy on every changed variable (several interim copies were
+    all zeros), so keeping the latest-ending copy loses nothing.
+    """
+    def key(s: ParsedSession):
+        m = s.meta
+        return (canonicalize_id(m.get("Subject", "")), m.get("Start Date", "").strip(),
+                m.get("Start Time", "").strip(), str(m.get("Box", "")).strip(),
+                normalize_msn(m.get("MSN", "")))
+
+    best: Dict[Any, Tuple[int, ParsedSession]] = {}
+    dropped = []
+    for i, sess in enumerate(sessions):
+        k = key(sess)
+        if k not in best:
+            best[k] = (i, sess)
+            continue
+        j, kept = best[k]
+        # Later end wins; on a tie the later record in the file wins.
+        if _end_sort_key(sess) >= _end_sort_key(kept):
+            loser, best[k] = kept, (i, sess)
+        else:
+            loser = sess
+        identical = loser.scalars == best[k][1].scalars and loser.arrays == best[k][1].arrays
+        dropped.append({
+            "canonical_subject": k[0], "start_date": k[1], "start_time": k[2],
+            "Box": k[3], "raw_msn": loser.meta.get("MSN", ""), "file": loser.filename,
+            "dropped_end": f"{loser.meta.get('End Date', '')} {loser.meta.get('End Time', '')}".strip(),
+            "kept_end": f"{best[k][1].meta.get('End Date', '')} {best[k][1].meta.get('End Time', '')}".strip(),
+            "copy": "identical" if identical else "interim save (kept the later, complete record)",
+        })
+    kept = [s for _, s in sorted(best.values(), key=lambda t: t[0])]
+    return kept, pd.DataFrame(dropped)
+
+
 def process_sessions(
     sessions: List[ParsedSession],
     allowed_ids: Optional[Set[str]] = None,
@@ -409,6 +530,19 @@ def process_sessions(
     unmapped   = []
     found: Set[str] = set()
     weight_key = _round_weight_to_table(avg_weight_g)
+
+    n_records_in = len(sessions)
+    sessions, duplicates_removed = deduplicate_sessions(sessions)
+    remnants = [s for s in sessions if is_reset_remnant(s)]
+    sessions = [s for s in sessions if not is_reset_remnant(s)]
+    reset_remnants = pd.DataFrame([{
+        "canonical_subject": canonicalize_id(r.meta.get("Subject", "")),
+        "raw_msn": r.meta.get("MSN", ""), "Box": r.meta.get("Box", ""), "file": r.filename,
+        "start_date": r.meta.get("Start Date", ""), "start_time": r.meta.get("Start Time", ""),
+        "end_time": r.meta.get("End Time", ""),
+        "counts_in_remnant": ", ".join(f"{k}={v:g}" for k, v in sorted(r.scalars.items())
+                                       if v and k in "IRAU"),
+    } for r in remnants])
 
     for sess in sessions:
         canon = canonicalize_id(sess.meta.get("Subject", ""))
@@ -454,6 +588,9 @@ def process_sessions(
         active_presses   = get_val(sess, mapping.get("active_presses"))
         inactive_presses = get_val(sess, mapping.get("inactive_presses"))
         pump_time_raw    = get_val(sess, mapping.get("pump_time"))
+        if mapping.get("pump_count") and mapping.get("pump_time_each"):
+            pump_time_raw = (get_val(sess, mapping["pump_count"])
+                             * get_val(sess, mapping["pump_time_each"]))
         breakpoint_val   = compute_breakpoint(sess, mapping, infusion_count)
 
         estimated_volume_ml   = infusion_count * PUMP_RATE_ML_SEC * inf_dur_sec
@@ -513,6 +650,20 @@ def process_sessions(
             "array_keys":  ",".join(sorted(sess.arrays)),
         }
 
+        # Extinction-only inactive presses.  In the nine-session extinction
+        # programs S.S.8 ("#R^RLEVER: ADD P") runs ungated for the whole run,
+        # so once the cue phase starts every inactive press lands in BOTH P
+        # and O.  P is therefore a whole-run total, not an extinction total;
+        # extinction-only inactive = P - O.
+        if mapping.get("inactive_includes_reinstatement"):
+            _o_key = mapping.get("reinstatement_inactive")
+            _o = get_val(sess, _o_key) if (_o_key and _o_key in sess.scalars) else 0.0
+            row["inactive_presses_extinction_only"] = max(inactive_presses - _o, 0.0)
+            row["inactive_presses_reinstatement"] = _o
+        else:
+            row["inactive_presses_extinction_only"] = inactive_presses
+            row["inactive_presses_reinstatement"] = 0.0
+
         special = mapping.get("special_processing")
 
         if special == "MOUSE_ADVANCED":
@@ -539,6 +690,12 @@ def process_sessions(
             row["infusion_timestamps"] = (
                 sess.arrays.get(inf_key, [])[:int(infusion_count)] if inf_key else []
             )
+            # The FR / PR programs DIM C = 3200: presses past the 3,200th get
+            # no timestamp (15 real PRCOCAINE sessions, up to 4,365 presses).
+            # Totals are unaffected; hourly active_events built from C then
+            # under-count the later hours, so say so on the row.
+            row["active_timestamps_capped"] = bool(
+                act_key and len(row["active_timestamps"]) < int(active_presses))
             row["inactive_timestamps"] = (
                 sess.arrays.get(mapping.get("inactive_timestamps"), [])
                 if mapping.get("inactive_timestamps") else []
@@ -579,16 +736,36 @@ def process_sessions(
             ts_inf = row.get("infusion_timestamps") or []
             ts_act = row.get("active_timestamps") or []
             ts_inact = row.get("inactive_timestamps") or []
-            hours = set()
-            for t in list(ts_inf) + list(ts_act) + list(ts_inact):
-                hours.add(int(t // 3600))
-            for h in sorted(hours):
+            # Every hour of the session gets a row, including hours with no
+            # events.  v7.2 only made rows for hours that had an event, so a
+            # quiet hour was missing rather than 0 and the per-hour means
+            # (subject and cohort) were averaged over active hours only.
+            # Programs that record no timestamps get no hourly rows at all.
+            has_ts = any(mapping.get(k) for k in
+                         ("infusion_timestamps", "active_timestamps", "inactive_timestamps"))
+            all_ts = list(ts_inf) + list(ts_act) + list(ts_inact)
+            n_hours = 0
+            if has_ts:
+                n_hours = max(int(math.ceil(duration_sec / 3600.0)) if duration_sec > 0 else 0,
+                              (int(max(all_ts) // 3600) + 1) if all_ts else 0)
+            for h in range(n_hours):
                 hourly_rows.append({
                     "hour": h,
                     "infusion_events": sum(1 for t in ts_inf if int(t // 3600) == h),
                     "active_events":   sum(1 for t in ts_act if int(t // 3600) == h),
                     "inactive_events": sum(1 for t in ts_inact if int(t // 3600) == h),
                 })
+
+        if special == "J_ARRAY_HOURLY" and hourly_rows:
+            # D (presses during an infusion) is not in these programs'
+            # DISKVARS (A,C,E,F,I,J,L,R,S,T,V,W), so get_val(D) was always 0
+            # and timeout_presses_per_inf read 0 for every FR / fentanyl
+            # session.  The same count is saved per hour in J(Q+3).
+            in_inf_total = float(sum(r["presses_during_infusion"] for r in hourly_rows))
+            row["presses_during_infusion"] = in_inf_total
+            if mapping.get("W_value") == "D":
+                row["W_value"] = in_inf_total
+                row["timeout_presses_per_inf"] = in_inf_total / (infusion_count + 1e-6)
 
         for hr_row in hourly_rows:
             all_hourly.append({
@@ -609,7 +786,9 @@ def process_sessions(
     # process_sessions signature stays put. app.py reads it immediately after
     # the call and stashes it in session_state.
     LAST_DIAGNOSTICS["segment_problems"] = pd.DataFrame(segment_problems)
-    LAST_DIAGNOSTICS["n_records_in"] = len(sessions)
+    LAST_DIAGNOSTICS["n_records_in"] = n_records_in
+    LAST_DIAGNOSTICS["duplicates_removed"] = duplicates_removed
+    LAST_DIAGNOSTICS["reset_remnants"] = reset_remnants
 
     if not df_sessions.empty:
         df_sessions = df_sessions.sort_values(["canonical_subject", "start_date"])

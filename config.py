@@ -71,7 +71,7 @@ from utils import normalize_msn
 # on trust.  Confirm them before publishing mouse data.
 # ============================================================================
 
-CONFIG_VERSION = "7.2"
+CONFIG_VERSION = "7.3"
 
 METADATA_KEYS = [
     "start date", "end date", "subject", "msn", "experiment", "group",
@@ -145,16 +145,79 @@ map_rat_pr = {
 }
 
 map_rat_ext = {
-    # Extinction with terminal reinstatement test
+    # Extinction (9 sessions) with a terminal cue-reinstatement test.
+    # Verified against all 31 nine-session .MPC variants in the project folder
+    # (EXTINCT MUST EXT BY 9 FOR REINST / FOR REINSTATE G136A|G140A|G140B,
+    # B BOXES, Z TEST, EXTINCT-REINSTATE G138A|G140A, g136B EXTINCT-REINSTATE):
+    #   S.S.9-17:  #R^LLEVER: IF Q = n -> ADD A/D/F/G/H/I/J/K/L   (n = 1..9)
+    #   S.S.18:    #Z7: SET U = (A+D+F+G+H+I+J+K+L)
+    #   S.S.8:     #R^RLEVER: ADD P
+    #   S.S.25:    #R1: Z6; ADD N      (cue DELIVERIES - not counted during the
+    #                                   5 s cue/pump window, so N <= M)
+    #   S.S.26:    #R1: ADD M          (every reinstatement active press)
+    #   S.S.28:    #R3: ADD O          (reinstatement inactive presses)
     "infusions":          "N",     # cue deliveries during the reinstatement test
     "active_presses":     "U",     # total active extinction responses
     "inactive_presses":   "P",
     "duration":           "Z",
     "special_processing": "EXTINCTION_DETAIL",
+    # S.S.8 ("#R^RLEVER: ADD P") is never gated on E, so it keeps counting
+    # through the reinstatement test while S.S.28 counts the same presses into
+    # O.  P is therefore inactive presses for the WHOLE run, not for extinction
+    # alone, and extinction-only inactive = P - O.  analyzer.py derives that as
+    # `inactive_presses_extinction_only`.
+    "inactive_includes_reinstatement": True,
+    # These programs have no DISKVARS line, so MedPC writes EVERY letter A-Z
+    # to every record: sessions that never ran (J/K/L for an animal that
+    # stopped after session 6) and M/N/O for an animal that never reached the
+    # cue phase are all present, as 0.  Presence therefore says nothing.
+    #   Q = sessions started (S.S.5 SET Q = 1; S.S.6 ADD Q each 65-min cycle
+    #       while E = 1).  On the 127 G126 2017/2018 records no animal has a
+    #       press in any session numbered > Q.
+    #   E = 1 during extinction; S.S.19-22 "SET E = 0" (the only assignments
+    #       in all 10 nine-session variants) start the cue phase.  E stays 1
+    #       when S.S.23 ends the run at session 9 without reinstatement.
+    # E = 0 with M = N = O = 0 is a genuine zero-response reinstatement test
+    # (9 of 54 animals in G126 2018) and must be kept, not dropped.
+    "session_count_var":        "Q",
+    "reinstatement_flag_var":   "E",
+    "reinstatement_flag_value": 0,
     "extinction_session_vars":  ["A", "D", "F", "G", "H", "I", "J", "K", "L"],
     "reinstatement_active":     "M",
     "reinstatement_inactive":   "O",
     "reinstatement_cues":       "N",
+    "W_value":            "U",
+    "T_value":            "Q",
+}
+
+map_rat_ext_2017 = {
+    # EXTINCTION G140 ABOXES 2017 - TEN extinction sessions, NO reinstatement.
+    # Verified against EXTINCTION G140 ABOXES 2017.MPC (also in MPC/ and
+    # OTHER PROGRAMS/; all three copies are byte-identical):
+    #   S.S.9-18:  #R^LLEVER: IF Q = n -> ADD A/D/F/G/H/I/J/K/L/M  (n = 1..10)
+    #   S.S.19:    #Z7: SET U = (A+D+F+G+H+I+J+K+L+M)
+    #   header:    "\M: SESSION 10 ACTIVE RESPONSES"
+    # The file contains no Z8/Z9, no cue delivery and no "ADD N" / "ADD O"
+    # anywhere, so there is no reinstatement phase.  M MUST NOT be read as
+    # reinstatement responding here - that is what map_rat_ext does, and
+    # routing this program through map_rat_ext both invents a reinstatement
+    # test out of session-10 extinction presses and drops session 10 from the
+    # per-session breakdown, so the nine reported sessions no longer sum to U.
+    "infusions":          None,
+    "active_presses":     "U",
+    "inactive_presses":   "P",
+    "duration":           "Z",
+    "special_processing": "EXTINCTION_DETAIL",
+    "extinction_session_vars": ["A", "D", "F", "G", "H", "I", "J", "K", "L", "M"],
+    "session_count_var":  "Q",
+    # No reinstatement_* keys: this program has no reinstatement phase.
+    #
+    # "Extinction G126 2017" is routed here too.  Its .MPC is not in the
+    # project folder, but all 73 records in G126/1-16/2017 have M = N = O = 0
+    # (no cue phase at all), the cue test ran the next day as the separate
+    # program "REINSTATEMENT G126 2017", and the naming matches the verified
+    # G140 pair.  No G126 record ran past session 8, so M (session 10) is never
+    # reported for them - the Q bound drops it.
     "W_value":            "U",
     "T_value":            "Q",
 }
@@ -179,7 +242,20 @@ map_rat_cue = {
     "inactive_presses":   "M",
     "duration":           "Z",
     "special_processing": "CUE_RELAPSE_SEGMENTS",
-    "segment_seconds":    3600,    # S.S.9: IF C(T) >= 3600
+    # S.S.9 reads "1": ADD C(0), C(T) ... IF C(T) >= 3600".  T is never SET in
+    # these programs, so T = 0 and "ADD C(0), C(T)" increments C(0) TWICE per
+    # second - the header comment "\120 = 1 MIN" says so explicitly.  The
+    # threshold 3600 is therefore 1800 real seconds = 30 min, which is what the
+    # .MPC headers have always said ("\A: 0-30 ACTIVE RESPONSES", "Z3: RESETS
+    # 30 MIN TIMER", "Z7: MARKS ENDS OF EACH 30 MIN SEGMENT").  The same
+    # doubling makes B(S) >= 50400 a 7 h hold, matching "7HR PRETX HOLD" in the
+    # program name, and V(S) >= 14400 a 2 h relapse window = 4 x 30 min.
+    # Confirmed empirically on the 42 G138A CUE RELAPSE records in
+    # "MedPC Processing File/New folder": median Start->End = 9.08 h
+    # (7 h hold + 2 h relapse), Q ends at 4, and A+D+F+G == R in 42/42.
+    # v7.0-7.2 set this to 3600 and labelled the bins "0-60 min" ... "180-240
+    # min", overstating the time base by 2x.
+    "segment_seconds":    1800,
     "active_segment_vars":   ["A", "D", "F", "G"],
     "inactive_segment_vars": ["H", "I", "J", "K"],
     "segment_counter":    "Q",
@@ -212,11 +288,28 @@ map_rat_dt = {
 }
 
 map_flush = {
+    # FLUSH ESD (all three variants): S.S.9 "SET F=0; ON ^PUMP; ADD Y" - Y is
+    # the number of flushes; S.S.8 "SET K = T*1"" - T is the pump time per
+    # flush in seconds ("\K: PUMP TIME IN SECONDS").  There is no I in this
+    # program, so v7.2's pump_time = "I" always read 0.
     "infusions":  None,
-    "pump_time":  "I",
+    "pump_time":  None,
+    "pump_count": "Y",
+    "pump_time_each": "T",
     "duration":   "Z",
     "W_value":    "W",
     "T_value":    "T",
+}
+
+map_rat_int_dt2017 = {
+    # MSN exactly "INTERMITTENT" (INTERMITTENT.mpc, May 2017): a discrete-
+    # trial program on a 30-min intermittent schedule (X = 1800).  Same
+    # variable layout as DT4FINAL, NOT as NEW INTERMITTENT ACCESS:
+    #   #R1 (lever extended): "OFF ^RETRACT; SET L(P)=0; ADD I"  -> infusions
+    #   #R3: "ADD R; SHOW 5, RLEVER, R"                           -> INACTIVE
+    # Routed through map_rat_int, R was reported as active presses (real
+    # record C538F: I = 38 infusions, R = 16).
+    **map_rat_dt,
 }
 
 map_withdrawal = {
@@ -285,6 +378,25 @@ map_mouse_extended_access = {
 # ─────────────────────────────────────────────────────────────────────────────
 DEFAULT_MSN_PATTERNS: Dict[str, List[str]] = {
 
+    # A pattern starting with "=" must equal the whole normalised MSN.  Every
+    # intermittent MSN contains "intermittent", so this one needs it.
+    "RAT - INTERMITTENT (2017 DISCRETE-TRIAL)": ["=intermittent"],
+
+    # Recognised but deliberately NOT analysed (no variable mapping), so they
+    # land in the Unrecognised-MSN report with this name as the reason rather
+    # than being read through a mapping that does not fit:
+    #   SECOND ORDER FR20 - a second-order schedule; no .MPC in the project;
+    #       every record in the backup is a test box.  Must sit above
+    #       "RAT - FR20" because its MSN contains "fr20".
+    #   PR 2 LEVER (22 HOUR) - no .MPC in the project and not the PRCOCAINE
+    #       layout: R covers the PR schedule in only 50 of 136 records and
+    #       len(C) / len(W) almost never equal R / I.
+    #   V6 TO 10 Ext PLUS CUE - several revisions under one MSN with
+    #       different meanings of M and N (see CHANGES_v7.3.md).
+    "UNSUPPORTED - SECOND ORDER FR20 (no .MPC source)": ["secondorder", "fr20secondorder"],
+    "UNSUPPORTED - PR 2 LEVER (no .MPC source)":        ["pr2lever"],
+    "UNSUPPORTED - V6 TO 10 EXT PLUS CUE (mixed revisions)": ["v6to10extpluscue"],
+
     "RAT - INTERMITTENT ACCESS": [
         "newintermittentaccessldfoodrestrictesd",
         "newintermittentaccessldesd", "intermittentaccessldesd",
@@ -328,6 +440,11 @@ DEFAULT_MSN_PATTERNS: Dict[str, List[str]] = {
     # FR20 variants kept as separate programs — PDT is a punished discrete-trial
     # schedule and must not be pooled with plain FR20.
     "RAT - FR20 PDT":            ["fr20pdt10secto", "fr20pdt10sectesd", "fr20pdtesd", "fr20pdt"],
+    # FR23hr (BOX11A_FR23hr, Box 15B FR23hr, FR23hr.MPC): identical variable
+    # layout to FR20 (I at Z7, R / A lever counters, C / W time arrays, 7-slot
+    # J), infusion cap 400 instead of 20.  On the 7 real 2017 records
+    # len(W) == I, len(C) == R and the J columns reconcile, 7/7.
+    "RAT - FR23HR":              ["fr23hr"],
     "RAT - FR20 FOOD RESTRICT":  ["fr20foodrestrictesd", "fr20foodrestrict"],
     "RAT - FR20":                ["fr20esd", "g136afr20", "fr20"],
     "RAT - FR40":                ["fr40", "g136afr40"],
@@ -336,13 +453,28 @@ DEFAULT_MSN_PATTERNS: Dict[str, List[str]] = {
     "RAT - PR FENTANYL": ["prfentesd", "prfent", "g136aprfent"],
     "RAT - PR FOOD":     ["prfood"],
 
+    # The 2017 ten-session variant must be matched BEFORE "RAT - EXTINCTION":
+    # its MSN contains "extinction", and the nine-session mapping misreads its
+    # M (session 10 actives) as reinstatement responding.  See map_rat_ext_2017.
+    "RAT - EXTINCTION ONLY (2017, NO REINSTATEMENT)": [
+        "extinctiong140aboxes2017", "extinctiong140aboxes",
+        "extinctiong140boxes2017", "extinctiong1262017",
+    ],
+
     "RAT - EXTINCTION": [
-        "ztestextinctmustextby9forreinstatedsd",
+        "ztestextinctmustextby9forreinstesd",
         "extinctmustextby9forreinsteg140aboxesesd",
         "extinctmustextby9forreinsteg136aboxesesd",
         "bboxesextinctmustextby9forreinstesdesd",
         "extinctmustextby9", "extinctreinstate", "extinct", "extinction",
-        "g136aextinct", "g140aextinct", "g136aprocaine", "g136aboxes",
+        "g136aextinct", "g140aextinct",
+        # REMOVED in 7.3:
+        #   "g136aprocaine" - a typo for PRCOCAINE, which is a different
+        #     program (map_rat_pr).  Any MSN that really did read "G136A
+        #     PROCAINE" was being reported as extinction.
+        #   "g136aboxes"    - matched the room/box label rather than the
+        #     protocol, so ANY G136A-boxes program whose MSN happened to carry
+        #     that string was classified as extinction.
     ],
 
     "RAT - REINSTATEMENT": [
@@ -390,12 +522,15 @@ DEFAULT_VARIABLE_MAPPINGS: Dict[str, Dict[str, Any]] = {
     "RAT - LOCOMOTOR BASELINE":             map_locomotor_baseline,
     "RAT - FR20":                           map_rat_fr,
     "RAT - FR20 PDT":                       map_rat_fr,
+    "RAT - FR23HR":                         map_rat_fr,
+    "RAT - INTERMITTENT (2017 DISCRETE-TRIAL)": map_rat_int_dt2017,
     "RAT - FR20 FOOD RESTRICT":             map_rat_fr,
     "RAT - FR40":                           map_rat_fr,
     "RAT - PR COCAINE":                     map_rat_pr,
     "RAT - PR FENTANYL":                    map_rat_pr,
     "RAT - PR FOOD":                        map_rat_pr,
     "RAT - EXTINCTION":                     map_rat_ext,
+    "RAT - EXTINCTION ONLY (2017, NO REINSTATEMENT)": map_rat_ext_2017,
     "RAT - REINSTATEMENT":                  map_rat_reinstatement,
     "RAT - CUE RELAPSE G138A":              map_rat_cue,
     "RAT - CUE RELAPSE G138B":              map_rat_cue,

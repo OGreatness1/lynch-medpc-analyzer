@@ -52,6 +52,8 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
+from config import DEFAULT_VARIABLE_MAPPINGS
+
 # ── styling, lifted from the source workbook ────────────────────────────────
 FONT_NAME = "Arial"
 FONT_SIZE = 10
@@ -84,11 +86,16 @@ PROGRAM_SHORT = {
     "RAT - FR20":                           "FR20",
     "RAT - FR20 FOOD RESTRICT":             "FR20_FR",
     "RAT - FR20 PDT":                       "FR20PDT",
+    "RAT - FR23HR":                         "FR23hr",
+    "RAT - INTERMITTENT (2017 DISCRETE-TRIAL)": "IntDT",
     "RAT - FR40":                           "FR40",
     "RAT - FR FOOD / MAG TRAINING":         "FRFood",
     "RAT - DISCRETE TRIAL (DT4)":           "DT4",
     "RAT - WITHDRAWAL":                     "With",
     "RAT - EXTINCTION":                     "Ext",
+    # Not "Ext10"/"Ext2017": a prefix ending in a digit runs into the session
+    # number ("Ext101" = Ext10 day 1?).
+    "RAT - EXTINCTION ONLY (2017, NO REINSTATEMENT)": "ExtNoRein",
     "RAT - REINSTATEMENT":                  "Reinst",
     "RAT - CUE RELAPSE G138A":              "Cue138A",
     "RAT - CUE RELAPSE G138B":              "Cue138B",
@@ -221,25 +228,45 @@ def build_program_table(sess: pd.DataFrame, seg: Optional[pd.DataFrame],
     """Wide table for one program: index = subject, columns = measure blocks."""
     short = program_short(program)
     sub = sess[sess["program_name"] == program]
+    # A program whose mapping has no infusion variable (infusions: None) gets
+    # 0 in that column from get_val(None).  Kept as the primary block it reads
+    # as "zero infusions" rather than "not measured".
+    no_infusion_var = DEFAULT_VARIABLE_MAPPINGS.get(program, {}).get("infusions", "") is None
     parts = []
+    infusion_part = None
     for col, suffix in SESSION_MEASURES:
-        if col not in sub.columns:
+        # Extinction: raw inactive (P) also counts the reinstatement-phase
+        # presses that the Reinst_Inact column reports, so the paper table
+        # would show them twice.  analyzer.py sets the extinction-only column
+        # equal to inactive_presses for every other program.
+        src = col
+        if col == "inactive_presses" and "inactive_presses_extinction_only" in sub.columns:
+            src = "inactive_presses_extinction_only"
+        if src not in sub.columns:
             continue
-        if not sub[col].notna().any() or (sub[col].fillna(0) == 0).all():
+        if not sub[src].notna().any() or (sub[src].fillna(0) == 0).all():
             # A measure that is legitimately zero for the whole program
             # (withdrawal has no levers) adds a wall of zeros; skip it.
             if col != "infusions":
                 continue
         prefix = f"{short}{suffix}" if suffix else short
-        p = _pivot(sub, col, prefix)
+        p = _pivot(sub, src, prefix)
         if not p.empty:
-            parts.append(p)
+            if col == "infusions" and no_infusion_var:
+                infusion_part = p
+            else:
+                parts.append(p)
 
     if seg is not None and not seg.empty:
         sseg = seg[seg["program_name"] == program]
         p = _pivot_segments(sseg, short)
         if not p.empty:
             parts.append(p)
+
+    # Only fall back to the placeholder infusion block when nothing else would
+    # be written, so a program such as WITHDRAWAL keeps its sheet and layout.
+    if not parts and infusion_part is not None:
+        parts.append(infusion_part)
 
     if not parts:
         return pd.DataFrame()

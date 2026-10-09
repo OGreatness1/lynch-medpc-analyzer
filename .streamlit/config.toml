@@ -1,2 +1,36 @@
 [server]
 maxUploadSize = 1000
+
+# Light and dark palettes; Streamlit follows the viewer's system setting and
+# the ⋮ → Settings menu can switch between them.  The Plotly charts use
+# theme="streamlit" so they pick up whichever palette is active.
+[theme]
+font = "'Inter', 'Segoe UI', system-ui, sans-serif"
+headingFontWeights = [700, 650, 600]
+baseRadius = "0.6rem"
+showWidgetBorder = true
+showSidebarBorder = true
+
+[theme.light]
+primaryColor = "#2563EB"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F3F6FB"
+textColor = "#0F172A"
+borderColor = "#E2E8F0"
+linkColor = "#1D4ED8"
+dataframeHeaderBackgroundColor = "#EEF2F8"
+
+[theme.light.sidebar]
+backgroundColor = "#F7F9FC"
+
+[theme.dark]
+primaryColor = "#60A5FA"
+backgroundColor = "#0E1117"
+secondaryBackgroundColor = "#1A1F2B"
+textColor = "#E5E7EB"
+borderColor = "#2A3140"
+linkColor = "#93C5FD"
+dataframeHeaderBackgroundColor = "#1E2533"
+
+[theme.dark.sidebar]
+backgroundColor = "#121722"
