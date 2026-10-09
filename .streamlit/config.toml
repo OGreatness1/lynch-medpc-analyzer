@@ -1,36 +1,32 @@
 [server]
 maxUploadSize = 1000
 
-# Light and dark palettes; Streamlit follows the viewer's system setting and
-# the ⋮ → Settings menu can switch between them.  The Plotly charts use
-# theme="streamlit" so they pick up whichever palette is active.
+# "minimal" hides the viewer menu's Settings / theme switcher. The app has one
+# deliberately designed theme; ui_style.py is written against exactly these
+# colours, so letting a viewer flip Streamlit to its stock light theme would
+# put light widgets under the dark styling (which is what happened in v7.3's
+# first visual refresh).
+[client]
+toolbarMode = "minimal"
+
+# "Midnight lab": the single theme. Keep in step with PALETTE in ui_style.py.
 [theme]
+base = "dark"
+primaryColor = "#6D8CFF"
+backgroundColor = "#090D18"
+secondaryBackgroundColor = "#121A2C"
+textColor = "#E7EBF4"
+linkColor = "#8FA8FF"
+borderColor = "#222C45"
+dataframeHeaderBackgroundColor = "#141C30"
 font = "'Inter', 'Segoe UI', system-ui, sans-serif"
+headingFont = "'Space Grotesk', 'Inter', 'Segoe UI', sans-serif"
 headingFontWeights = [700, 650, 600]
-baseRadius = "0.6rem"
+baseRadius = "0.7rem"
 showWidgetBorder = true
-showSidebarBorder = true
+showSidebarBorder = false
 
-[theme.light]
-primaryColor = "#2563EB"
-backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F3F6FB"
-textColor = "#0F172A"
-borderColor = "#E2E8F0"
-linkColor = "#1D4ED8"
-dataframeHeaderBackgroundColor = "#EEF2F8"
-
-[theme.light.sidebar]
-backgroundColor = "#F7F9FC"
-
-[theme.dark]
-primaryColor = "#60A5FA"
-backgroundColor = "#0E1117"
-secondaryBackgroundColor = "#1A1F2B"
-textColor = "#E5E7EB"
-borderColor = "#2A3140"
-linkColor = "#93C5FD"
-dataframeHeaderBackgroundColor = "#1E2533"
-
-[theme.dark.sidebar]
-backgroundColor = "#121722"
+[theme.sidebar]
+backgroundColor = "#0C1222"
+secondaryBackgroundColor = "#141C30"
+borderColor = "#222C45"

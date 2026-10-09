@@ -122,11 +122,11 @@ if not st.session_state.authenticated:
         # KeyError the moment a password was typed.
         _pw_hash = None
 
-    _, mid, _ = st.columns([1, 1.4, 1])
+    _, mid, _ = st.columns([1, 1.6, 1])
     with mid:
         st.write("")
         ui_style.hero("Lynch Lab · UVA", "MedPC", "Analyzer",
-                      "Lab members only · restricted access")
+                      "Lab members only · restricted access", stack=True)
         if _pw_hash is None:
             st.error(
                 "No password is configured for this deployment. Add "
@@ -305,7 +305,7 @@ if not has_results and not run_clicked:
         [("Upload", "Add MedPC data files - or a zip of them - in the sidebar. An ID list is optional."),
          ("Adjust", "Cohort filter, flag thresholds and intake settings live under <i>Options</i>."),
          ("Run", "Press <b>Run analysis</b>. Results, data-quality checks and downloads appear here.")],
-        intro=f"{ui_style.greeting()} 👋 &nbsp;Ready when you are.")
+        intro=f"{ui_style.greeting()} 👋", aside="Ready when you are.")
     if st.session_state.get("analysis_run") and st.session_state.df_sess is not None:
         st.warning("No data matched your filters / ID list.")
 
