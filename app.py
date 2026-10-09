@@ -58,6 +58,11 @@ except ImportError as _e:
     _MISSING.append(f"wide_export.py  ({_e})")
 
 try:
+    import ui_style
+except ImportError as _e:
+    _MISSING.append(f"ui_style.py  ({_e})")
+
+try:
     from config import CONFIG_VERSION
 except ImportError:
     CONFIG_VERSION = None
@@ -66,8 +71,8 @@ if _MISSING or CONFIG_VERSION != "7.3":
     st.title("Deployment is out of sync")
     st.error(
         f"This app expects every module at v{'7.3'}. "
-        "The full set is **config.py, analyzer.py, app.py, parser.py, plotter.py "
-        "and wide_export.py** \u2014 push them together in one commit, then reboot "
+        "The full set is **config.py, analyzer.py, app.py, parser.py, plotter.py, "
+        "ui_style.py and wide_export.py** \u2014 push them together in one commit, then reboot "
         "from *Manage app \u2192 Reboot*."
     )
     st.info(
@@ -102,34 +107,8 @@ def _short(program: str) -> str:
     return program
 
 
-# Light page styling on top of .streamlit/config.toml: tighter top padding and
-# card-like metrics. Colours come from the theme, so this works in light and
-# dark mode alike.
-st.markdown(
-    """
-    <style>
-      .block-container {padding-top: 2.2rem; padding-bottom: 3rem;}
-      [data-testid="stMetric"] {
-          background: var(--secondary-background-color, rgba(127,127,127,.06));
-          border: 1px solid rgba(127,127,127,.18);
-          border-radius: .6rem; padding: .7rem .9rem;
-      }
-      [data-testid="stMetricLabel"] p {font-size: .82rem; opacity: .8;}
-      [data-testid="stMetricValue"] {font-size: 1.65rem;}
-      h1 {letter-spacing: -.01em; font-size: clamp(1.6rem, 1.1rem + 2vw, 2.4rem) !important;}
-      /* Narrow windows: keep summary cards 2-3 per row instead of one each. */
-      @media (max-width: 640px) {
-        [data-testid="stHorizontalBlock"]:has(> [data-testid="stColumn"] [data-testid="stMetric"]) {
-            flex-wrap: wrap !important; gap: .5rem !important;
-        }
-        [data-testid="stHorizontalBlock"]:has(> [data-testid="stColumn"] [data-testid="stMetric"]) > [data-testid="stColumn"] {
-            flex: 1 1 30% !important; min-width: 7.5rem !important;
-        }
-      }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+# Theme-aware look and background motion (CSS only) - see ui_style.py.
+ui_style.inject_global_style()
 
 # ── Login ────────────────────────────────────────────────────────────────────
 if "authenticated" not in st.session_state:
@@ -145,8 +124,9 @@ if not st.session_state.authenticated:
 
     _, mid, _ = st.columns([1, 1.4, 1])
     with mid:
-        st.markdown("## 🧬 Lynch Lab MedPC Analyzer")
-        st.caption("Lab members only · restricted access")
+        st.write("")
+        ui_style.hero("Lynch Lab · UVA", "MedPC", "Analyzer",
+                      "Lab members only · restricted access")
         if _pw_hash is None:
             st.error(
                 "No password is configured for this deployment. Add "
@@ -313,21 +293,19 @@ with st.sidebar:
                             help=None if data_files else "Upload at least one data file first.")
 
 # ── Header ───────────────────────────────────────────────────────────────────
-st.title("🧬 Lynch Lab MedPC Analyzer")
-st.caption("Parse MedPC exports · per-session and per-segment breakdowns · flags · paper-ready workbooks")
+_has_results_hdr = (st.session_state.df_sess is not None and not st.session_state.df_sess.empty)
+ui_style.hero(f"Lynch Lab · v{CONFIG_VERSION}", "MedPC", "Analyzer",
+              "Parse MedPC exports · per-session and per-segment breakdowns · flags · "
+              "paper-ready workbooks", compact=_has_results_hdr)
 
 has_results = (st.session_state.df_sess is not None and not st.session_state.df_sess.empty)
 
 if not has_results and not run_clicked:
-    with st.container(border=True):
-        st.markdown("#### Get started")
-        s1, s2, s3 = st.columns(3)
-        s1.markdown("**1 · Upload**  \nAdd MedPC data files (or a zip) in the sidebar. "
-                    "An ID list is optional.")
-        s2.markdown("**2 · Adjust**  \nCohort filter, flag thresholds and intake "
-                    "settings live under *Options*.")
-        s3.markdown("**3 · Run**  \nPress **Run analysis**. Results, data-quality "
-                    "checks and downloads appear here.")
+    ui_style.steps(
+        [("Upload", "Add MedPC data files - or a zip of them - in the sidebar. An ID list is optional."),
+         ("Adjust", "Cohort filter, flag thresholds and intake settings live under <i>Options</i>."),
+         ("Run", "Press <b>Run analysis</b>. Results, data-quality checks and downloads appear here.")],
+        intro=f"{ui_style.greeting()} 👋 &nbsp;Ready when you are.")
     if st.session_state.get("analysis_run") and st.session_state.df_sess is not None:
         st.warning("No data matched your filters / ID list.")
 
@@ -731,14 +709,14 @@ if has_results:
             st.info("Exports are built when the analysis runs — press **Run analysis** again.")
         else:
             dl1, dl2 = st.columns(2)
-            with dl1, st.container(border=True):
+            with dl1, st.container(key="glass_zip"):
                 st.markdown("**📦 Full analysis (ZIP)**")
                 st.caption("Per-program workbooks (Sessions, Hourly, Segments, Daily, Flags), "
                            "PNG plots, skipped-session and unrecognised-MSN logs, and the "
                            "paper-format workbook.")
                 st.download_button("Download ZIP", exports["zip"], exports["zip_name"],
                                    "application/zip", type="primary", use_container_width=True)
-            with dl2, st.container(border=True):
+            with dl2, st.container(key="glass_paper"):
                 st.markdown("**📄 Paper-format workbook**")
                 if exports["paper"] is not None:
                     st.caption(f"ID / Group / per-session columns with Mean & SEM. "
@@ -762,3 +740,5 @@ if has_results:
             if k != "authenticated":
                 del st.session_state[k]
         st.rerun()
+
+ui_style.footer(CONFIG_VERSION)

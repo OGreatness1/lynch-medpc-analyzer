@@ -215,6 +215,21 @@ click (switching program, subject or view) went from about 13 s to
 * *Clear results* keeps you signed in. A missing `secrets.toml` now
   produces a clear message instead of a `KeyError`.
 
+## 7. Visual refresh (ui_style.py)
+* Animated background, CSS only: a slow colour glow, a faint drifting dot
+  grid, and two parallax layers of floating particles. They live on
+  pseudo-elements, so they never block clicks, and only `transform` /
+  `opacity` animate.
+* An animated double-helix logo, a gradient title with shimmer, and a
+  version badge.
+* Frosted-glass metric, chart and download cards with hover lift and fade-in.
+* Gradient primary buttons with a hover sheen, and highlighted active
+  pills and segments.
+* A welcome card that greets the viewer by their own time of day
+  (`st.context.timezone`), plus a footer.
+* Matched light and dark palettes. All motion is disabled when the viewer's
+  system requests reduced motion.
+
 ## Not changed: open questions
 * **Cohort filter.** The filter looks for room codes inside the Subject ID.
   The lab's IDs (`O479M`, `C1264M`) never contain one, so deselecting *All
