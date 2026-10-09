@@ -216,19 +216,31 @@ click (switching program, subject or view) went from about 13 s to
   produces a clear message instead of a `KeyError`.
 
 ## 7. Visual refresh (ui_style.py)
-* Animated background, CSS only: a slow colour glow, a faint drifting dot
-  grid, and two parallax layers of floating particles. They live on
-  pseudo-elements, so they never block clicks, and only `transform` /
-  `opacity` animate.
-* An animated double-helix logo, a gradient title with shimmer, and a
-  version badge.
-* Frosted-glass metric, chart and download cards with hover lift and fade-in.
-* Gradient primary buttons with a hover sheen, and highlighted active
-  pills and segments.
-* A welcome card that greets the viewer by their own time of day
-  (`st.context.timezone`), plus a footer.
-* Matched light and dark palettes. All motion is disabled when the viewer's
-  system requests reduced motion.
+* **One designed dark theme ("midnight lab").** It is defined in lock-step
+  in `.streamlit/config.toml` and `ui_style.PALETTE`, and the viewer theme
+  switcher is hidden (`client.toolbarMode = "minimal"`). A first version
+  guessed light or dark from `st.context.theme`. On Streamlit Cloud that
+  guess disagreed with what Streamlit drew, putting dark widgets under light
+  styling. Streamlit exposes no theme CSS variables, so the theme is fixed
+  instead of detected.
+* **Fonts.** Inter (text) and Space Grotesk (headings) are loaded from Google
+  Fonts. The config named Inter before, but it was never loaded.
+* **Background motion, CSS only.** A slow colour glow, a faint drifting dot
+  grid, and two parallax particle layers. They live on pseudo-elements, so
+  they never block clicks, and only `transform` / `opacity` animate.
+* **Header motion graphic.** A cumulative record draws itself: response
+  steps, pen resets at the top, infusion pips, and an event raster. It is a
+  fixed illustrative pattern, not data. There is also an animated
+  double-helix logo and a gradient title.
+* **Surfaces.** Frosted-glass sidebar, upload zones, expanders, metric /
+  chart / download cards and welcome step cards. Gradient primary buttons
+  have a hover sheen, and the active pills and segments are highlighted.
+* **Welcome card.** Greets the viewer by their own time of day
+  (`st.context.timezone`).
+* **Reduced motion.** All animation is off for viewers whose system asks for
+  reduced motion; the record is then shown fully drawn.
+* **Deploying.** `config.toml` is read only at startup, so after changing the
+  theme use *Manage app -> Reboot app* on Streamlit Cloud.
 
 ## Not changed: open questions
 * **Cohort filter.** The filter looks for room codes inside the Subject ID.
